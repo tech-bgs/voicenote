@@ -166,9 +166,9 @@ static void lengthText(char *out, size_t n, int seconds) {
 
 // ---------- 화면들 ----------
 
-void showMain(int noteCount, int pendingCount, int batteryPct, const char *topHint) {
+void showMain(int noteCount, int pendingCount, int batteryPct, const char *topHint, const char *clock) {
   g.clearBuffer();
-  statusBar(batteryPct, "VOICE NOTE");
+  statusBar(batteryPct, "VOICE NOTE", (clock && clock[0]) ? clock : nullptr);
   mic(100, 70);
   char line[40];
   snprintf(line, sizeof(line), "녹음 %d개", noteCount);
@@ -214,6 +214,51 @@ void showList(const NoteRow *rows, int total, int selected, int batteryPct, bool
     y += 48;
   }
   hintBar(topHint, "다음 ▼");
+  flush(partial);
+}
+
+void showRecording(int number, uint32_t seconds, const uint8_t *levels, int levelCount, uint32_t freeMinutes,
+                   bool partial) {
+  g.clearBuffer();
+  // 맨 위: 검은 띠에 "● 녹음 중"
+  g.drawBox(0, 0, 200, 25);
+  g.setDrawColor(0);
+  g.drawDisc(13, 12, 5);
+  g.setDrawColor(1);
+  drawK(24, 18, "녹음 중", KO18, 0);
+  char no[8];
+  snprintf(no, sizeof(no), "#%03d", number);
+  textRight(194, 18, no, KO18, 0);
+
+  // 경과 시간
+  char t[12];
+  if (seconds >= 3600) {
+    snprintf(t, sizeof(t), "%lu:%02lu:%02lu", (unsigned long)(seconds / 3600), (unsigned long)(seconds / 60 % 60),
+             (unsigned long)(seconds % 60));
+  } else {
+    snprintf(t, sizeof(t), "%02lu:%02lu", (unsigned long)(seconds / 60), (unsigned long)(seconds % 60));
+  }
+  textCenter(96, t, NUM48);
+
+  // 소리 크기 막대 (오른쪽이 최신)
+  const int barW = 5, gap = 3, maxH = 28, base = 140;
+  const int totalW = levelCount * (barW + gap) - gap;
+  int x = (200 - totalW) / 2;
+  for (int i = 0; i < levelCount; i++, x += barW + gap) {
+    const int h = max(2, levels[i] * maxH / 100);
+    g.drawBox(x, base - h, barW, h);
+  }
+
+  // 남은 공간
+  char left[40];
+  if (freeMinutes >= 120) {
+    snprintf(left, sizeof(left), "남은 공간 약 %lu시간", (unsigned long)(freeMinutes / 60));
+  } else {
+    snprintf(left, sizeof(left), "남은 공간 약 %lu분", (unsigned long)freeMinutes);
+  }
+  textCenter(161, left, KO18);
+
+  hintBar("▲ 멈춤", nullptr);
   flush(partial);
 }
 

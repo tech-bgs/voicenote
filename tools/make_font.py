@@ -20,7 +20,9 @@ SIZES = [
     ("KO18", "NotoSansKR[wght].ttf", 18, "Medium"),  # 보조 글자
     ("KO20", "NotoSansKR[wght].ttf", 20, "Medium"),  # 기본 글자
     ("KO26", "NotoSansKR[wght].ttf", 26, "Bold"),    # 강조 글자
+    ("NUM48", "NotoSansKR[wght].ttf", 48, "Bold"),   # 녹음 시간 큰 숫자 (숫자와 : 만)
 ]
+DIGITS_ONLY = {"NUM48"}
 
 
 def charset():
@@ -141,7 +143,8 @@ def emit(fonts):
 
 def main():
     chars = charset()
-    fonts = [build(n, file, s, wt, chars) for n, file, s, wt in SIZES]
+    digits = list("0123456789: ")
+    fonts = [build(n, file, s, wt, digits if n in DIGITS_ONLY else chars) for n, file, s, wt in SIZES]
     emit(fonts)
     for f in fonts:
         print(f"{f['name']}: 글자 {len(f['glyphs'])}개, 점 데이터 {len(f['bits']) // 1024}KB")

@@ -19,3 +19,20 @@
 #define PIN_AUDIO_PWR 42 // LOW = 오디오 전원 켬
 
 #define PIN_LED 3
+
+// I2C (오디오 칩 ES8311, 시계 PCF85063)
+#define PIN_I2C_SDA 47
+#define PIN_I2C_SCL 48
+
+// I2S (마이크·스피커 소리 데이터)
+#define PIN_I2S_MCLK 14
+#define PIN_I2S_BCLK 15
+#define PIN_I2S_WS 38
+#define PIN_I2S_DOUT 45 // 스피커 쪽
+#define PIN_I2S_DIN 16  // 마이크 쪽
+#define PIN_SPK_AMP 46  // 스피커 앰프
+
+// SD카드 (1선 모드)
+#define PIN_SD_CLK 39
+#define PIN_SD_CMD 41
+#define PIN_SD_D0 40
