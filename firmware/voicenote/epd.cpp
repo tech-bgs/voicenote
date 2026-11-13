@@ -107,6 +107,18 @@ void begin() {
   spi.begin(PIN_EPD_SCK, -1, PIN_EPD_MOSI, PIN_EPD_CS);
 }
 
+static bool ready = false;     // 칩이 준비됐고 이전 그림이 칩 안에 있음
+static int partialCount = 0;   // 부분 갱신 횟수 (잔상 쌓이면 전체 갱신)
+static const int kPartialLimit = 10;
+
+static void setCursor() {
+  command(0x4E);
+  data(0x00);
+  command(0x4F);
+  data(0xC7);
+  data(0x00);
+}
+
 void showFull(const uint8_t *image) {
   initChip();
   command(0x24); // 새 그림
@@ -118,12 +130,37 @@ void showFull(const uint8_t *image) {
   data(0xF7);
   command(0x20);
   waitIdle();
+  ready = true;
+  partialCount = 0;
+}
+
+void showPartial(const uint8_t *image) {
+  if (!ready || partialCount >= kPartialLimit) {
+    showFull(image);
+    return;
+  }
+  command(0x3C); // 부분 갱신 땐 테두리 그대로
+  data(0x80);
+  setCursor();
+  command(0x24); // 새 그림 (칩이 0x26의 이전 그림과 비교해서 바뀐 곳만 바꿈)
+  dataBlock(image, BUF_SIZE);
+
+  command(0x22); // 부분 갱신 (모드 2)
+  data(0xFF);
+  command(0x20);
+  waitIdle();
+
+  setCursor();
+  command(0x26); // 다음 비교용으로 이전 그림 갱신
+  dataBlock(image, BUF_SIZE);
+  partialCount++;
 }
 
 void sleep() {
   command(0x10); // 깊은 잠
   data(0x01);
   delay(5);
+  ready = false; // 깨어나면 전체 갱신부터
 }
 
 } // namespace epd
