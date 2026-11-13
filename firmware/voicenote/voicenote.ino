@@ -4,7 +4,7 @@
 #include "pins.h"
 #include "screen.h"
 
-enum class Page { Main, List };
+enum class Page { Main, List, Message };
 
 static Page page = Page::Main;
 static int selected = 0;
@@ -13,8 +13,8 @@ static int selected = 0;
 static const NoteRow kDemoRows[] = {
     {13, "11/13 14:20", 312, "새 글"},
     {12, "11/13 09:05", 107, "변환됨"},
-    {11, "11/12 21:40", 723, "변환됨"},
-    {10, "11/12 18:11", 38, "변환 전"},
+    {11, "11/12 21:40", 723, "변환 전"},
+    {10, "11/12 18:11", 38, "변환됨"},
 };
 static const int kDemoCount = sizeof(kDemoRows) / sizeof(kDemoRows[0]);
 
@@ -47,12 +47,15 @@ static Press readButton(Button &b) {
 
 static int batteryPct() { return 80; } // 배터리 읽기는 다음 단계
 
-static void draw() {
-  if (page == Page::Main) {
-    screen::showMain(kDemoCount, 1, batteryPct());
-  } else {
-    screen::showList(kDemoRows, kDemoCount, selected, kDemoCount, batteryPct());
-  }
+static void goMain() {
+  page = Page::Main;
+  screen::showMain(kDemoCount, 1, batteryPct());
+}
+
+static void goList() {
+  page = Page::List;
+  selected = 0;
+  screen::showList(kDemoRows, kDemoCount, selected, batteryPct(), false); // 들어갈 땐 전체 갱신
 }
 
 void setup() {
@@ -61,13 +64,13 @@ void setup() {
 
   Serial.begin(115200);
   delay(300);
-  Serial.println("[voicenote] boot step1 (screen + buttons)");
+  Serial.println("[voicenote] boot step1b (big font + partial refresh)");
 
   pinMode(PIN_BTN_TOP, INPUT_PULLUP);
   pinMode(PIN_BTN_PWR, INPUT_PULLUP);
 
   screen::begin();
-  draw();
+  goMain();
   Serial.println("[voicenote] main screen drawn");
 }
 
@@ -78,30 +81,30 @@ void loop() {
   if (t != Press::None) Serial.printf("[btn] top %s\n", t == Press::Long ? "long" : "short");
   if (b != Press::None) Serial.printf("[btn] bottom %s\n", b == Press::Long ? "long" : "short");
 
-  if (page == Page::Main) {
-    if (b == Press::Short) {
-      page = Page::List;
-      selected = 0;
-      draw();
-    } else if (t == Press::Short) {
-      screen::showMessage("녹음은 다음 단계", "위 버튼: 메인으로");
-      page = Page::List; // 아무 버튼이나 누르면 아래에서 메인으로 돌아감
-      selected = -1;
-    }
-  } else {
-    if (selected < 0) {
-      if (t != Press::None || b != Press::None) {
-        page = Page::Main;
-        selected = 0;
-        draw();
+  switch (page) {
+    case Page::Main:
+      if (b == Press::Short) {
+        goList();
+      } else if (t == Press::Short) {
+        page = Page::Message;
+        screen::showMessage("녹음은 다음 단계", "아무 버튼: 메인으로");
       }
-    } else if (b == Press::Short) {
-      selected = (selected + 1) % kDemoCount;
-      draw();
-    } else if (t == Press::Short || b == Press::Long) {
-      page = Page::Main;
-      draw();
-    }
+      break;
+
+    case Page::List:
+      if (b == Press::Short) {
+        selected = (selected + 1) % kDemoCount;
+        const uint32_t start = millis();
+        screen::showList(kDemoRows, kDemoCount, selected, batteryPct(), true); // 깜빡임 없이
+        Serial.printf("[list] move to %d (%lu ms)\n", selected, millis() - start);
+      } else if (t == Press::Short || b == Press::Long) {
+        goMain();
+      }
+      break;
+
+    case Page::Message:
+      if (t != Press::None || b != Press::None) goMain();
+      break;
   }
   delay(10);
 }

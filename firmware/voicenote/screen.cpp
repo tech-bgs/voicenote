@@ -3,31 +3,24 @@
 #include <U8g2lib.h>
 
 #include "epd.h"
+#include "font_ko.h"
 
 namespace screen {
 
-// U8g2는 그림 그리는 도구로만 쓴다. 실제 화면 전송은 epd.cpp가 한다.
+// U8g2는 선·네모 그리는 도구로만 쓴다. 글자는 아래 drawK(Pretendard 점 글꼴)로 그린다.
 static U8G2 g;
 static uint8_t frame[epd::BUF_SIZE];
 
 static uint8_t noopByte(u8x8_t *, uint8_t, uint8_t, void *) { return 1; }
 static uint8_t noopGpio(u8x8_t *, uint8_t, uint8_t, void *) { return 1; }
 
-// 한글 글꼴 (unifont 16px)
-static const uint8_t *const FONT_KO = u8g2_font_unifont_t_korean2;
-static const uint8_t *const FONT_SMALL = u8g2_font_helvR10_tr;
-static const uint8_t *const FONT_BOLD = u8g2_font_helvB12_tr;
-static const uint8_t *const FONT_TITLE = u8g2_font_helvB18_tr;
-
 void begin() {
   u8g2_Setup_ssd1607_200x200_f(g.getU8g2(), U8G2_R0, noopByte, noopGpio);
-  g.enableUTF8Print();
-  g.setFontMode(1);
   epd::begin();
 }
 
 // U8g2 버퍼(세로 8픽셀 묶음, 1=검정) → 화면 칩 형식(가로 8픽셀 묶음, 1=흰색)
-static void flush() {
+static void flush(bool partial) {
   const uint8_t *src = g.getBufferPtr();
   memset(frame, 0xFF, sizeof(frame));
   for (int y = 0; y < epd::HEIGHT; y++) {
@@ -37,19 +30,86 @@ static void flush() {
       if (row[x] & bit) frame[y * 25 + x / 8] &= ~(0x80 >> (x % 8));
     }
   }
-  epd::showFull(frame);
+  if (partial) {
+    epd::showPartial(frame);
+  } else {
+    epd::showFull(frame);
+  }
+}
+
+// ---------- 한글 글자 그리기 ----------
+
+// UTF-8 한 글자 읽기
+static uint16_t nextCode(const char *&p) {
+  const uint8_t c = *p++;
+  if (c < 0x80) return c;
+  if ((c & 0xE0) == 0xC0) {
+    const uint16_t v = ((c & 0x1F) << 6) | (*p++ & 0x3F);
+    return v;
+  }
+  if ((c & 0xF0) == 0xE0) {
+    uint16_t v = (c & 0x0F) << 12;
+    v |= (*p++ & 0x3F) << 6;
+    v |= (*p++ & 0x3F);
+    return v;
+  }
+  return '?';
+}
+
+static const KGlyph *findGlyph(const KFont &f, uint16_t code) {
+  int lo = 0, hi = f.count - 1;
+  while (lo <= hi) {
+    const int mid = (lo + hi) / 2;
+    const uint16_t c = f.glyphs[mid].code;
+    if (c == code) return &f.glyphs[mid];
+    if (c < code) lo = mid + 1;
+    else hi = mid - 1;
+  }
+  return nullptr;
+}
+
+static int widthK(const KFont &f, const char *s) {
+  int w = 0;
+  while (*s) {
+    const KGlyph *gl = findGlyph(f, nextCode(s));
+    w += gl ? gl->adv : f.height / 2;
+  }
+  return w;
+}
+
+// x: 왼쪽, y: 글자 기준선. color 1=검정, 0=흰색
+static int drawK(int x, int y, const char *s, const KFont &f, uint8_t color = 1) {
+  g.setDrawColor(color);
+  while (*s) {
+    const KGlyph *gl = findGlyph(f, nextCode(s));
+    if (!gl) {
+      x += f.height / 2;
+      continue;
+    }
+    const uint8_t *bits = f.bits + gl->off;
+    int bitIndex = 0;
+    for (int yy = 0; yy < gl->h; yy++) {
+      for (int xx = 0; xx < gl->w; xx++, bitIndex++) {
+        if (bits[bitIndex >> 3] & (0x80 >> (bitIndex & 7))) {
+          g.drawPixel(x + gl->xo + xx, y + gl->yo + yy);
+        }
+      }
+    }
+    x += gl->adv;
+  }
+  g.setDrawColor(1);
+  return x;
+}
+
+static void textCenter(int y, const char *s, const KFont &f, uint8_t color = 1) {
+  drawK((200 - widthK(f, s)) / 2, y, s, f, color);
+}
+
+static void textRight(int xRight, int y, const char *s, const KFont &f, uint8_t color = 1) {
+  drawK(xRight - widthK(f, s), y, s, f, color);
 }
 
 // ---------- 공통 부품 ----------
-
-static void textCenter(int y, const char *s) {
-  const int w = g.getUTF8Width(s);
-  g.drawUTF8((200 - w) / 2, y, s);
-}
-
-static void textRight(int xRight, int y, const char *s) {
-  g.drawUTF8(xRight - g.getUTF8Width(s), y, s);
-}
 
 static void battery(int x, int y, int pct) {
   g.drawFrame(x, y, 21, 11);
@@ -58,26 +118,35 @@ static void battery(int x, int y, int pct) {
   if (w > 0) g.drawBox(x + 2, y + 2, w, 7);
 }
 
-static void statusBar(int batteryPct) {
-  g.setFont(FONT_BOLD);
-  g.drawStr(6, 15, "--:--"); // 시계는 다음 단계에서 연결
-  battery(172, 5, batteryPct);
-  g.drawHLine(0, 20, 200);
+static void statusBar(int batteryPct, const char *center = nullptr) {
+  drawK(6, 19, "--:--", KO20); // 시계는 다음 단계에서 연결
+  if (center) textCenter(19, center, KO20);
+  battery(172, 6, batteryPct);
+  g.drawHLine(0, 24, 200);
 }
 
 static void hintBar(const char *left, const char *right) {
-  g.drawHLine(0, 178, 200);
-  g.setFont(FONT_KO);
-  if (left) g.drawUTF8(6, 196, left);
-  if (right) textRight(194, 196, right);
+  g.drawHLine(0, 170, 200);
+  if (left) drawK(6, 193, left, KO20);
+  if (right) textRight(194, 193, right, KO20);
 }
 
 static void mic(int cx, int cy) {
-  g.drawRBox(cx - 17, cy - 30, 34, 38, 16);
-  g.drawCircle(cx, cy - 6, 27, U8G2_DRAW_LOWER_LEFT | U8G2_DRAW_LOWER_RIGHT);
-  g.drawCircle(cx, cy - 6, 26, U8G2_DRAW_LOWER_LEFT | U8G2_DRAW_LOWER_RIGHT);
-  g.drawBox(cx - 1, cy + 20, 3, 12);
-  g.drawBox(cx - 13, cy + 31, 27, 3);
+  g.drawRBox(cx - 11, cy - 20, 23, 27, 11);
+  g.drawCircle(cx, cy, 18, U8G2_DRAW_LOWER_LEFT | U8G2_DRAW_LOWER_RIGHT);
+  g.drawCircle(cx, cy, 17, U8G2_DRAW_LOWER_LEFT | U8G2_DRAW_LOWER_RIGHT);
+  g.drawCircle(cx, cy, 16, U8G2_DRAW_LOWER_LEFT | U8G2_DRAW_LOWER_RIGHT);
+  g.drawBox(cx - 1, cy + 14, 3, 9);
+  g.drawBox(cx - 9, cy + 22, 19, 3);
+}
+
+// 녹음 길이: 1분 미만은 "N초", 그 외는 "N분"
+static void lengthText(char *out, size_t n, int seconds) {
+  if (seconds < 60) {
+    snprintf(out, n, "%d초", seconds);
+  } else {
+    snprintf(out, n, "%d분", (seconds + 30) / 60);
+  }
 }
 
 // ---------- 화면들 ----------
@@ -85,60 +154,56 @@ static void mic(int cx, int cy) {
 void showMain(int noteCount, int newCount, int batteryPct) {
   g.clearBuffer();
   statusBar(batteryPct);
-  mic(100, 70);
-  g.setFont(FONT_TITLE);
-  textCenter(132, "VOICE NOTE");
-  g.setFont(FONT_KO);
-  char line[48];
-  snprintf(line, sizeof(line), "녹음 %d개 · 새 글 %d개", noteCount, newCount);
-  textCenter(160, line);
+  mic(100, 56);
+  textCenter(106, "VOICE NOTE", KO20);
+  char line[40];
+  snprintf(line, sizeof(line), "녹음 %d개", noteCount);
+  textCenter(140, line, KO26);
+  snprintf(line, sizeof(line), "새 글 %d개", newCount);
+  textCenter(162, line, KO20);
   hintBar("위: 녹음", "아래: 목록");
-  flush();
+  flush(false);
 }
 
-void showList(const NoteRow *rows, int rowCount, int selected, int total, int batteryPct) {
+void showList(const NoteRow *rows, int total, int selected, int batteryPct, bool partial) {
   g.clearBuffer();
-  statusBar(batteryPct);
-  g.setFont(FONT_KO);
-  g.drawUTF8(6, 40, "녹음 목록");
   char pos[16];
   snprintf(pos, sizeof(pos), "%d/%d", selected + 1, total);
-  g.setFont(FONT_SMALL);
-  textRight(194, 38, pos);
+  statusBar(batteryPct, pos);
 
-  int y = 46;
-  for (int i = 0; i < rowCount && i < 4; i++) {
+  // 한 화면에 3줄. 선택된 줄이 들어 있는 3줄 묶음을 보여 준다
+  const int first = (selected / 3) * 3;
+  int y = 26;
+  for (int i = first; i < total && i < first + 3; i++) {
     const NoteRow &r = rows[i];
     const bool sel = i == selected;
-    if (sel) {
-      g.drawBox(2, y, 196, 31);
-      g.setDrawColor(0);
-    }
+    const uint8_t color = sel ? 0 : 1;
+    if (sel) g.drawBox(0, y, 200, 47);
+
     char no[8];
     snprintf(no, sizeof(no), "#%03d", r.number);
-    g.setFont(FONT_BOLD);
-    g.drawStr(8, y + 14, no);
-    g.setFont(FONT_SMALL);
-    g.drawStr(60, y + 13, r.date);
-    char len[8];
-    snprintf(len, sizeof(len), "%02d:%02d", r.seconds / 60, r.seconds % 60);
-    g.drawStr(8, y + 28, len);
-    g.setFont(FONT_KO);
-    textRight(190, y + 29, r.state);
-    g.setDrawColor(1);
-    if (!sel) g.drawHLine(8, y + 31, 184);
-    y += 32;
+    drawK(8, y + 22, no, KO26, color);
+    textRight(192, y + 21, r.state, KO20, color);
+
+    char len[12], sub[40];
+    lengthText(len, sizeof(len), r.seconds);
+    snprintf(sub, sizeof(sub), "%s · %s", r.date, len);
+    drawK(8, y + 42, sub, KO20, color);
+
+    // 선택 안 된 두 줄 사이 구분선
+    const bool nextSel = (i + 1) == selected;
+    if (!sel && !nextSel && i < first + 2 && i + 1 < total) g.drawHLine(8, y + 47, 184);
+    y += 48;
   }
   hintBar("위: 선택", "아래: 다음");
-  flush();
+  flush(partial);
 }
 
 void showMessage(const char *title, const char *line) {
   g.clearBuffer();
-  g.setFont(FONT_KO);
-  textCenter(90, title);
-  if (line) textCenter(115, line);
-  flush();
+  textCenter(95, title, KO26);
+  if (line) textCenter(125, line, KO20);
+  flush(false);
 }
 
 } // namespace screen
