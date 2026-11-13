@@ -51,11 +51,16 @@ bool begin() {
     Serial.println("[rtc] time not set");
     return false;
   }
-  const time_t now = mktime(&t); // 시계 칩에는 한국 시간이 들어 있다고 본다
+  // 시계 칩에는 세계 표준시(UTC)가 들어 있다 (실제 확인: 칩 14:19, 한국 23:19)
+  setenv("TZ", "UTC0", 1);
+  tzset();
+  const time_t now = mktime(&t);
+  setenv("TZ", "KST-9", 1);
+  tzset();
   struct timeval tv = {now, 0};
   settimeofday(&tv, nullptr);
   ok = true;
-  Serial.printf("[rtc] %04d-%02d-%02d %02d:%02d\n", t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour,
+  Serial.printf("[rtc] chip (UTC) %04d-%02d-%02d %02d:%02d\n", t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour,
                 t.tm_min);
   return true;
 }
