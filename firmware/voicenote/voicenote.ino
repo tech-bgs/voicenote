@@ -11,10 +11,10 @@ static int selected = 0;
 
 // 1단계 확인용 가짜 목록
 static const NoteRow kDemoRows[] = {
-    {13, "11/13 14:20", 312, "새 글"},
-    {12, "11/13 09:05", 107, "변환됨"},
-    {11, "11/12 21:40", 723, "변환 전"},
-    {10, "11/12 18:11", 38, "변환됨"},
+    {13, "11/13 14:20", 312, false},
+    {12, "11/13 09:05", 107, true},
+    {11, "11/12 21:40", 723, true},
+    {10, "11/12 18:11", 38, true},
 };
 static const int kDemoCount = sizeof(kDemoRows) / sizeof(kDemoRows[0]);
 
@@ -47,15 +47,25 @@ static Press readButton(Button &b) {
 
 static int batteryPct() { return 80; } // 배터리 읽기는 다음 단계
 
+static int pendingCount() {
+  int n = 0;
+  for (int i = 0; i < kDemoCount; i++) n += kDemoRows[i].converted ? 0 : 1;
+  return n;
+}
+
+// 아직 안 되는 기능은 안내에 띄우지 않는다 (녹음·재생은 다음 단계)
+static const char *const kMainTopHint = nullptr;  // 녹음 붙이면 "▲ 녹음"
+static const char *const kListTopHint = "▲ 뒤로"; // 재생 붙이면 "▲ 선택"
+
 static void goMain() {
   page = Page::Main;
-  screen::showMain(kDemoCount, 1, batteryPct());
+  screen::showMain(kDemoCount, pendingCount(), batteryPct(), kMainTopHint);
 }
 
 static void goList() {
   page = Page::List;
   selected = 0;
-  screen::showList(kDemoRows, kDemoCount, selected, batteryPct(), false); // 들어갈 땐 전체 갱신
+  screen::showList(kDemoRows, kDemoCount, selected, batteryPct(), false, kListTopHint); // 들어갈 땐 전체 갱신
 }
 
 void setup() {
@@ -64,7 +74,7 @@ void setup() {
 
   Serial.begin(115200);
   delay(300);
-  Serial.println("[voicenote] boot step1b (big font + partial refresh)");
+  Serial.println("[voicenote] boot step1c (v3 design)");
 
   pinMode(PIN_BTN_TOP, INPUT_PULLUP);
   pinMode(PIN_BTN_PWR, INPUT_PULLUP);
@@ -83,19 +93,14 @@ void loop() {
 
   switch (page) {
     case Page::Main:
-      if (b == Press::Short) {
-        goList();
-      } else if (t == Press::Short) {
-        page = Page::Message;
-        screen::showMessage("녹음은 다음 단계", "아무 버튼: 메인으로");
-      }
+      if (b == Press::Short) goList(); // 위 버튼(녹음)은 다음 단계에서 연결
       break;
 
     case Page::List:
       if (b == Press::Short) {
         selected = (selected + 1) % kDemoCount;
         const uint32_t start = millis();
-        screen::showList(kDemoRows, kDemoCount, selected, batteryPct(), true); // 깜빡임 없이
+        screen::showList(kDemoRows, kDemoCount, selected, batteryPct(), true, kListTopHint); // 깜빡임 없이
         Serial.printf("[list] move to %d (%lu ms)\n", selected, millis() - start);
       } else if (t == Press::Short || b == Press::Long) {
         goMain();

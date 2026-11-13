@@ -118,26 +118,31 @@ static void battery(int x, int y, int pct) {
   if (w > 0) g.drawBox(x + 2, y + 2, w, 7);
 }
 
-static void statusBar(int batteryPct, const char *center = nullptr) {
-  drawK(6, 19, "--:--", KO20); // 시계는 다음 단계에서 연결
-  if (center) textCenter(19, center, KO20);
+// 맨 위 줄: 왼쪽 제목, 오른쪽 배터리 (그 왼쪽에 rightText)
+static void statusBar(int batteryPct, const char *title, const char *rightText = nullptr) {
+  drawK(6, 18, title, KO18);
+  if (rightText) textRight(164, 18, rightText, KO18);
   battery(172, 6, batteryPct);
   g.drawHLine(0, 24, 200);
 }
 
+// 맨 아래 줄: 버튼 안내 (nullptr이면 안 씀)
 static void hintBar(const char *left, const char *right) {
   g.drawHLine(0, 170, 200);
-  if (left) drawK(6, 193, left, KO20);
-  if (right) textRight(194, 193, right, KO20);
+  if (left) drawK(6, 192, left, KO20);
+  if (right) textRight(194, 192, right, KO20);
 }
 
 static void mic(int cx, int cy) {
-  g.drawRBox(cx - 11, cy - 20, 23, 27, 11);
-  g.drawCircle(cx, cy, 18, U8G2_DRAW_LOWER_LEFT | U8G2_DRAW_LOWER_RIGHT);
-  g.drawCircle(cx, cy, 17, U8G2_DRAW_LOWER_LEFT | U8G2_DRAW_LOWER_RIGHT);
-  g.drawCircle(cx, cy, 16, U8G2_DRAW_LOWER_LEFT | U8G2_DRAW_LOWER_RIGHT);
-  g.drawBox(cx - 1, cy + 14, 3, 9);
-  g.drawBox(cx - 9, cy + 22, 19, 3);
+  const int ringY = cy + 2;
+  // 받침 고리: 아래 반원 두 개를 겹쳐서 끊김 없는 두께 4 고리
+  g.drawDisc(cx, ringY, 25, U8G2_DRAW_LOWER_LEFT | U8G2_DRAW_LOWER_RIGHT);
+  g.setDrawColor(0);
+  g.drawDisc(cx, ringY, 21, U8G2_DRAW_LOWER_LEFT | U8G2_DRAW_LOWER_RIGHT);
+  g.setDrawColor(1);
+  g.drawRBox(cx - 15, cy - 30, 31, 39, 14); // 몸통
+  g.drawBox(cx - 1, cy + 20, 3, 11);        // 기둥
+  g.drawBox(cx - 11, cy + 30, 23, 3);       // 받침
 }
 
 // 녹음 길이: 1분 미만은 "N초", 그 외는 "N분"
@@ -151,25 +156,28 @@ static void lengthText(char *out, size_t n, int seconds) {
 
 // ---------- 화면들 ----------
 
-void showMain(int noteCount, int newCount, int batteryPct) {
+void showMain(int noteCount, int pendingCount, int batteryPct, const char *topHint) {
   g.clearBuffer();
-  statusBar(batteryPct);
-  mic(100, 56);
-  textCenter(106, "VOICE NOTE", KO20);
+  statusBar(batteryPct, "VOICE NOTE");
+  mic(100, 70);
   char line[40];
   snprintf(line, sizeof(line), "녹음 %d개", noteCount);
-  textCenter(140, line, KO26);
-  snprintf(line, sizeof(line), "새 글 %d개", newCount);
-  textCenter(162, line, KO20);
-  hintBar("위: 녹음", "아래: 목록");
+  textCenter(136, line, KO26);
+  if (pendingCount > 0) {
+    snprintf(line, sizeof(line), "변환 전 %d개", pendingCount);
+  } else {
+    snprintf(line, sizeof(line), "모두 변환됨");
+  }
+  textCenter(159, line, KO18);
+  hintBar(topHint, "목록 ▼");
   flush(false);
 }
 
-void showList(const NoteRow *rows, int total, int selected, int batteryPct, bool partial) {
+void showList(const NoteRow *rows, int total, int selected, int batteryPct, bool partial, const char *topHint) {
   g.clearBuffer();
   char pos[16];
   snprintf(pos, sizeof(pos), "%d/%d", selected + 1, total);
-  statusBar(batteryPct, pos);
+  statusBar(batteryPct, "녹음 목록", pos);
 
   // 한 화면에 3줄. 선택된 줄이 들어 있는 3줄 묶음을 보여 준다
   const int first = (selected / 3) * 3;
@@ -178,24 +186,20 @@ void showList(const NoteRow *rows, int total, int selected, int batteryPct, bool
     const NoteRow &r = rows[i];
     const bool sel = i == selected;
     const uint8_t color = sel ? 0 : 1;
-    if (sel) g.drawBox(0, y, 200, 47);
+    if (sel) g.drawRBox(3, y + 1, 194, 45, 6);
 
     char no[8];
     snprintf(no, sizeof(no), "#%03d", r.number);
-    drawK(8, y + 22, no, KO26, color);
-    textRight(192, y + 21, r.state, KO20, color);
+    drawK(12, y + 23, no, KO26, color);
+    textRight(188, y + 21, r.converted ? "✓" : "변환 전", KO18, color);
 
     char len[12], sub[40];
     lengthText(len, sizeof(len), r.seconds);
     snprintf(sub, sizeof(sub), "%s · %s", r.date, len);
-    drawK(8, y + 42, sub, KO20, color);
-
-    // 선택 안 된 두 줄 사이 구분선
-    const bool nextSel = (i + 1) == selected;
-    if (!sel && !nextSel && i < first + 2 && i + 1 < total) g.drawHLine(8, y + 47, 184);
+    drawK(12, y + 41, sub, KO18, color);
     y += 48;
   }
-  hintBar("위: 선택", "아래: 다음");
+  hintBar(topHint, "다음 ▼");
   flush(partial);
 }
 
