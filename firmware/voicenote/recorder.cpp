@@ -16,6 +16,9 @@ static const size_t kReadChunk = 1024;        // 마이크에서 한 번에 읽�
 static const size_t kWriteChunk = 16 * 1024;  // SD에 한 번에 쓰는 양
 static const size_t kRingSize = 256 * 1024;   // 소리 임시 저장 (약 8초). SD가 잠깐 느려도 안 끊김
 
+// 마이크 감도. 녹음이 작으면 올리고, 소리가 찢어지면(클리핑) 내린다
+static const es8311_mic_gain_t kMicGain = ES8311_MIC_GAIN_36DB;
+
 static I2SClass i2s;
 static RingbufHandle_t ring = nullptr;
 static File file;
@@ -28,6 +31,8 @@ static volatile bool writerDone = false;
 static volatile bool error = false;
 static volatile uint32_t bytesWritten = 0;
 static volatile uint8_t currentLevel = 0;
+static volatile int maxPeak = 0;          // 이번 녹음에서 가장 큰 소리 (감도 맞출 때 참고)
+static volatile uint32_t clippedSamples = 0; // 너무 커서 잘린 소리 개수
 static uint32_t startedAt = 0;
 
 static void writeWavHeader(File &f, uint32_t dataBytes) {
@@ -66,7 +71,12 @@ static void readerLoop(void *) {
     if (got == 0) continue;
     // 소리 크기 (화면 막대용): 가장 큰 값 기준
     int peak = 0;
-    for (size_t i = 0; i < got / 2; i++) peak = max(peak, abs((int)buf[i]));
+    for (size_t i = 0; i < got / 2; i++) {
+      const int a = abs((int)buf[i]);
+      peak = max(peak, a);
+      if (a >= 32000) clippedSamples++;
+    }
+    if (peak > maxPeak) maxPeak = peak;
     currentLevel = min(100, peak * 100 / 12000);
     if (xRingbufferSend(ring, buf, got, pdMS_TO_TICKS(50)) != pdTRUE) {
       error = true; // SD가 너무 느려서 임시 저장소가 꽉 참
@@ -124,7 +134,7 @@ bool begin() {
     return false;
   }
   es8311_microphone_config(es, false);
-  es8311_microphone_gain_set(es, ES8311_MIC_GAIN_24DB);
+  es8311_microphone_gain_set(es, kMicGain);
 
   i2s.setPins(PIN_I2S_BCLK, PIN_I2S_WS, PIN_I2S_DOUT, PIN_I2S_DIN, PIN_I2S_MCLK);
   if (!i2s.begin(I2S_MODE_STD, kRate, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO, I2S_STD_SLOT_LEFT)) {
@@ -153,6 +163,8 @@ bool start(const char *path) {
   error = false;
   readerDone = writerDone = false;
   currentLevel = 0;
+  maxPeak = 0;
+  clippedSamples = 0;
 
   // 시작 직전 마이크에 쌓인 옛 소리 버리기
   char junk[512];
@@ -173,8 +185,9 @@ uint32_t stop() {
   writeWavHeader(file, bytesWritten);
   file.close();
   const uint32_t secs = bytesWritten / kBytesPerSec;
-  Serial.printf("[rec] stop: %lu bytes, %lu s, error=%d\n", (unsigned long)bytesWritten, (unsigned long)secs,
-                error ? 1 : 0);
+  Serial.printf("[rec] stop: %lu bytes, %lu s, error=%d, peak=%d/32767 (%d%%), clipped=%lu\n",
+                (unsigned long)bytesWritten, (unsigned long)secs, error ? 1 : 0, maxPeak, maxPeak * 100 / 32767,
+                (unsigned long)clippedSamples);
   return secs;
 }
 

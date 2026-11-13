@@ -12,13 +12,22 @@ static bool ok = false;
 static uint8_t bcd(uint8_t v) { return (v >> 4) * 10 + (v & 0x0F); }
 
 bool begin() {
+  // 시계 칩을 못 읽어도 한국 시간으로 표시되게 시간대는 항상 먼저 정한다
+  setenv("TZ", "KST-9", 1);
+  tzset();
+
   Wire.beginTransmission(kAddr);
   Wire.write(0x04); // 초 레지스터부터
-  if (Wire.endTransmission(false) != 0) {
-    Serial.println("[rtc] no answer");
+  const uint8_t err = Wire.endTransmission(true);
+  if (err != 0) {
+    Serial.printf("[rtc] no answer (err=%u)\n", err);
     return false;
   }
-  if (Wire.requestFrom(kAddr, (uint8_t)7) != 7) return false;
+  const uint8_t got = Wire.requestFrom(kAddr, (uint8_t)7);
+  if (got != 7) {
+    Serial.printf("[rtc] read failed (got %u bytes)\n", got);
+    return false;
+  }
   const uint8_t sec = Wire.read();
   const uint8_t min = Wire.read();
   const uint8_t hour = Wire.read();
@@ -42,9 +51,7 @@ bool begin() {
     Serial.println("[rtc] time not set");
     return false;
   }
-  setenv("TZ", "KST-9", 1); // 한국 시간
-  tzset();
-  const time_t now = mktime(&t);
+  const time_t now = mktime(&t); // 시계 칩에는 한국 시간이 들어 있다고 본다
   struct timeval tv = {now, 0};
   settimeofday(&tv, nullptr);
   ok = true;
@@ -56,13 +63,13 @@ bool begin() {
 bool valid() { return ok; }
 
 void timeText(char *out, size_t n) {
-  if (!ok) {
-    out[0] = 0;
-    return;
-  }
   const time_t now = time(nullptr);
   struct tm t;
   localtime_r(&now, &t);
+  if (t.tm_year < 125) { // 2025년 이전 = 시간 모름
+    out[0] = 0;
+    return;
+  }
   snprintf(out, n, "%02d:%02d", t.tm_hour, t.tm_min);
 }
 
