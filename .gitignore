@@ -1,0 +1,12 @@
+# 키·비밀번호 (절대 올리지 않음)
+secrets.h
+.env
+
+# 빌드 결과물
+build/
+*.bin
+*.elf
+*.map
+
+# macOS
+.DS_Store
