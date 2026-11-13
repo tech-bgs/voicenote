@@ -16,10 +16,10 @@ OUT = ROOT / "firmware" / "voicenote" / "font_ko.h"
 
 # (이름, 글꼴 파일, 픽셀 크기)
 SIZES = [
-    ("KO20", "Pretendard-Bold.otf", 20),
-    ("KO26", "Pretendard-Bold.otf", 26),
+    ("KO18", "Pretendard-SemiBold.otf", 18),  # 보조 글자 (조금 얇게)
+    ("KO20", "Pretendard-SemiBold.otf", 20),  # 기본 글자
+    ("KO26", "Pretendard-Bold.otf", 26),      # 강조 글자
 ]
-THRESHOLD = 120  # 이 값보다 진하면 검은 점
 
 
 def charset():
@@ -31,7 +31,7 @@ def charset():
                 chars.append(bytes([hi, lo]).decode("euc-kr"))
             except UnicodeDecodeError:
                 pass
-    chars += list("·…→←↑↓●○▶◀✓×")
+    chars += list("·…→←↑↓●○▶◀▲▼›✓×")
     return sorted(set(chars), key=ord)
 
 
@@ -43,10 +43,12 @@ def rasterize(font, ch):
         return None, 0, 0, 0, 0, adv
     x0, y0, x1, y1 = bbox
     w, h = x1 - x0, y1 - y0
-    img = Image.new("L", (w, h), 0)
-    ImageDraw.Draw(img).text((-x0, -y0), ch, font=font, fill=255, anchor="ls")
+    img = Image.new("1", (w, h), 0)
+    d = ImageDraw.Draw(img)
+    d.fontmode = "1"  # 흑백 화면용으로 다듬어 그리기 (회색 없이 점 단위로 맞춤)
+    d.text((-x0, -y0), ch, font=font, fill=1, anchor="ls")
     px = img.load()
-    rows = [[1 if px[x, y] >= THRESHOLD else 0 for x in range(w)] for y in range(h)]
+    rows = [[1 if px[x, y] else 0 for x in range(w)] for y in range(h)]
     return rows, w, h, x0, y0, adv
 
 
