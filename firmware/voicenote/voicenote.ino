@@ -141,10 +141,10 @@ void setup() {
   pinMode(PIN_BTN_PWR, INPUT_PULLUP);
 
   Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
-  rtc::begin();
-  screen::begin();
+  screen::begin();            // 화면 전원 켬
   sdOk = storage::begin();
-  recOk = recorder::begin();
+  recOk = recorder::begin();  // 오디오 전원 켬
+  rtc::begin();               // 시계 칩은 위 전원들이 켜진 뒤에 읽어야 응답함 (공식 예제 순서)
   refreshNotes();
   goMain();
   Serial.printf("[voicenote] ready (sd=%d rec=%d)\n", sdOk, recOk);
