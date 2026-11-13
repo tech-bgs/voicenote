@@ -15,8 +15,10 @@ void begin();
 // 전체를 새로 그린다 (깜빡이며 약 2초)
 void showFull(const uint8_t *image);
 
-// 바뀐 곳만 다시 그린다 (깜빡임 거의 없음). 10번마다 한 번은 잔상 지우려고 전체 갱신
-void showPartial(const uint8_t *image);
+// 바뀐 곳만 다시 그린다 (깜빡임 거의 없음).
+// allowCleanup=true 면 10번마다 한 번은 잔상 지우려고 전체 갱신 (깜빡임)
+// 녹음 중처럼 깜빡이면 안 될 땐 false — 대신 녹음이 끝나고 전체 갱신으로 정리된다
+void showPartial(const uint8_t *image, bool allowCleanup = true);
 
 // 화면 칩을 잠재운다 (그림은 화면에 그대로 남음)
 void sleep();

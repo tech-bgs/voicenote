@@ -64,11 +64,40 @@ static void writeWavHeader(File &f, uint32_t dataBytes) {
 }
 
 // 마이크 → 임시 저장소
+// 자동 음량 조절: 작은 말소리는 키우고(최대 8배), 큰 소리는 바로 줄여서 찢어지지 않게 한다
+static const float kTargetPeak = 16000;  // 목표 크기 (최대의 약 절반)
+static const float kMaxGain = 8.0f;      // 최대로 키우는 배수
+static const float kSilenceGain = 2.0f;  // 조용할 땐 잡음이 커지지 않게 이 이상 안 키움
+static const int kSilencePeak = 400;     // 이보다 작으면 '조용함'
+static float gain = 1.0f;
+static volatile float gainSum = 0;
+static volatile uint32_t gainCount = 0;
+
+static void applyAutoGain(int16_t *s, size_t n) {
+  int rawPeak = 1;
+  for (size_t i = 0; i < n; i++) rawPeak = max(rawPeak, abs((int)s[i]));
+  float want = constrain(kTargetPeak / rawPeak, 1.0f, kMaxGain);
+  if (rawPeak < kSilencePeak) want = min(want, kSilenceGain);
+  if (want < gain) {
+    gain = want; // 갑자기 큰 소리: 바로 줄임
+  } else {
+    gain += (want - gain) * 0.05f; // 조용해지면 천천히 키움 (약 0.6초)
+  }
+  for (size_t i = 0; i < n; i++) {
+    const int v = (int)(s[i] * gain);
+    s[i] = (int16_t)constrain(v, -32000, 32000);
+  }
+  gainSum += gain;
+  gainCount++;
+}
+
+// 마이크 → 임시 저장소
 static void readerLoop(void *) {
   static int16_t buf[kReadChunk / 2];
   while (running) {
     const size_t got = i2s.readBytes((char *)buf, kReadChunk);
     if (got == 0) continue;
+    applyAutoGain(buf, got / 2);
     // 소리 크기 (화면 막대용): 가장 큰 값 기준
     int peak = 0;
     for (size_t i = 0; i < got / 2; i++) {
@@ -77,7 +106,7 @@ static void readerLoop(void *) {
       if (a >= 32000) clippedSamples++;
     }
     if (peak > maxPeak) maxPeak = peak;
-    currentLevel = min(100, peak * 100 / 12000);
+    currentLevel = min(100, peak * 100 / 20000);
     if (xRingbufferSend(ring, buf, got, pdMS_TO_TICKS(50)) != pdTRUE) {
       error = true; // SD가 너무 느려서 임시 저장소가 꽉 참
     }
@@ -165,6 +194,9 @@ bool start(const char *path) {
   currentLevel = 0;
   maxPeak = 0;
   clippedSamples = 0;
+  gain = 1.0f;
+  gainSum = 0;
+  gainCount = 0;
 
   // 시작 직전 마이크에 쌓인 옛 소리 버리기
   char junk[512];
@@ -185,9 +217,9 @@ uint32_t stop() {
   writeWavHeader(file, bytesWritten);
   file.close();
   const uint32_t secs = bytesWritten / kBytesPerSec;
-  Serial.printf("[rec] stop: %lu bytes, %lu s, error=%d, peak=%d/32767 (%d%%), clipped=%lu\n",
-                (unsigned long)bytesWritten, (unsigned long)secs, error ? 1 : 0, maxPeak, maxPeak * 100 / 32767,
-                (unsigned long)clippedSamples);
+  Serial.printf("[rec] stop: %lu bytes, %lu s, error=%d, peak=%d%%, clipped=%lu, avg gain x%.1f\n",
+                (unsigned long)bytesWritten, (unsigned long)secs, error ? 1 : 0, maxPeak * 100 / 32767,
+                (unsigned long)clippedSamples, gainCount ? gainSum / gainCount : 0.0f);
   return secs;
 }
 

@@ -134,8 +134,8 @@ void showFull(const uint8_t *image) {
   partialCount = 0;
 }
 
-void showPartial(const uint8_t *image) {
-  if (!ready || partialCount >= kPartialLimit) {
+void showPartial(const uint8_t *image, bool allowCleanup) {
+  if (!ready || (allowCleanup && partialCount >= kPartialLimit)) {
     showFull(image);
     return;
   }

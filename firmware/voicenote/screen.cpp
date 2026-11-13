@@ -20,7 +20,7 @@ void begin() {
 }
 
 // U8g2 버퍼(세로 8픽셀 묶음, 1=검정) → 화면 칩 형식(가로 8픽셀 묶음, 1=흰색)
-static void flush(bool partial) {
+static void flush(bool partial, bool allowCleanup = true) {
   const uint8_t *src = g.getBufferPtr();
   memset(frame, 0xFF, sizeof(frame));
   for (int y = 0; y < epd::HEIGHT; y++) {
@@ -31,7 +31,7 @@ static void flush(bool partial) {
     }
   }
   if (partial) {
-    epd::showPartial(frame);
+    epd::showPartial(frame, allowCleanup);
   } else {
     epd::showFull(frame);
   }
@@ -259,7 +259,7 @@ void showRecording(int number, uint32_t seconds, const uint8_t *levels, int leve
   textCenter(161, left, KO18);
 
   hintBar("▲ 멈춤", nullptr);
-  flush(partial);
+  flush(partial, false); // 녹음 중엔 잔상 정리용 전체 갱신(깜빡임) 안 함
 }
 
 void showMessage(const char *title, const char *line) {
