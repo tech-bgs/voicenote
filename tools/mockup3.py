@@ -95,7 +95,7 @@ def main():
     tw = th = W * SCALE
     sheet = Image.new("L", (len(tiles) * (tw + pad) + pad, th + lh + 2 * pad), 255)
     sd = ImageDraw.Draw(sheet)
-    lf = ImageFont.truetype(str(mf.FONT_DIR / "Pretendard-Bold.otf"), 26)
+    lf = ImageFont.truetype(str(mf.FONT_DIR / "NotoSansKR[wght].ttf"), 26)
     for i, (label, im) in enumerate(tiles):
         x = pad + i * (tw + pad)
         sd.text((x, pad), label, font=lf, fill=0)

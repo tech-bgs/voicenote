@@ -16,7 +16,7 @@ W = H = 200
 SCALE = 3
 OUT = Path(__file__).resolve().parent.parent / "design"
 
-FONTS = {n: ImageFont.truetype(str(mf.FONT_DIR / f), s) for n, f, s in mf.SIZES}
+FONTS = {n: mf.load_font(f, s, wt) for n, f, s, wt in mf.SIZES}
 _cache = {}
 
 
@@ -146,7 +146,7 @@ def main():
     tw = th = W * SCALE
     sheet = Image.new("L", (len(tiles) * (tw + pad) + pad, th + lh + 2 * pad), 255)
     sd = ImageDraw.Draw(sheet)
-    lf = ImageFont.truetype(str(mf.FONT_DIR / "Pretendard-Bold.otf"), 26)
+    lf = ImageFont.truetype(str(mf.FONT_DIR / "NotoSansKR[wght].ttf"), 26)
     for i, (label, im) in enumerate(tiles):
         x = pad + i * (tw + pad)
         sd.text((x, pad), f"{i + 1}. {label}", font=lf, fill=0)

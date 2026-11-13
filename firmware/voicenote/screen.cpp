@@ -145,6 +145,16 @@ static void mic(int cx, int cy) {
   g.drawBox(cx - 11, cy + 30, 23, 3);       // 받침
 }
 
+// ✓ 표시 (가로 14, 세로 11, 두께 3). 글꼴에 의존하지 않게 직접 그린다
+static void checkMark(int x, int y, uint8_t color) {
+  g.setDrawColor(color);
+  for (int t = 0; t < 3; t++) {
+    g.drawLine(x, y + 5 + t, x + 4, y + 9 + t);      // 짧은 획
+    g.drawLine(x + 4, y + 9 + t, x + 13, y + t);     // 긴 획
+  }
+  g.setDrawColor(1);
+}
+
 // 녹음 길이: 1분 미만은 "N초", 그 외는 "N분"
 static void lengthText(char *out, size_t n, int seconds) {
   if (seconds < 60) {
@@ -191,7 +201,11 @@ void showList(const NoteRow *rows, int total, int selected, int batteryPct, bool
     char no[8];
     snprintf(no, sizeof(no), "#%03d", r.number);
     drawK(12, y + 23, no, KO26, color);
-    textRight(188, y + 21, r.converted ? "✓" : "변환 전", KO18, color);
+    if (r.converted) {
+      checkMark(174, y + 7, color);
+    } else {
+      textRight(188, y + 21, "변환 전", KO18, color);
+    }
 
     char len[12], sub[40];
     lengthText(len, sizeof(len), r.seconds);

@@ -1,6 +1,6 @@
 """기기용 한글 글꼴 만들기 (맥에서 실행).
 
-Pretendard(OFL) 글꼴에서 자주 쓰는 한글 2350자 + 영문·숫자·기호를 뽑아
+Noto Sans KR(OFL) 글꼴에서 자주 쓰는 한글 2350자 + 영문·숫자·기호를 뽑아
 흑백 점 그림으로 바꾼 뒤 firmware/voicenote/font_ko.h 로 저장한다.
 
 실행: python3 tools/make_font.py
@@ -16,9 +16,10 @@ OUT = ROOT / "firmware" / "voicenote" / "font_ko.h"
 
 # (이름, 글꼴 파일, 픽셀 크기)
 SIZES = [
-    ("KO18", "Pretendard-SemiBold.otf", 18),  # 보조 글자 (조금 얇게)
-    ("KO20", "Pretendard-SemiBold.otf", 20),  # 기본 글자
-    ("KO26", "Pretendard-Bold.otf", 26),      # 강조 글자
+    # (이름, 글꼴 파일, 픽셀 크기, 굵기)
+    ("KO18", "NotoSansKR[wght].ttf", 18, "Medium"),  # 보조 글자
+    ("KO20", "NotoSansKR[wght].ttf", 20, "Medium"),  # 기본 글자
+    ("KO26", "NotoSansKR[wght].ttf", 26, "Bold"),    # 강조 글자
 ]
 
 
@@ -62,8 +63,15 @@ def has_glyph(font, ch):
         return False
 
 
-def build(name, file, size, chars):
+def load_font(file, size, weight):
     font = ImageFont.truetype(str(FONT_DIR / file), size)
+    if weight:
+        font.set_variation_by_name(weight)
+    return font
+
+
+def build(name, file, size, weight, chars):
+    font = load_font(file, size, weight)
     ascent, descent = font.getmetrics()
     notdef = rasterize(font, chr(0xFFFF))[0]
     glyphs, bits = [], bytearray()
@@ -92,7 +100,7 @@ def build(name, file, size, chars):
 def emit(fonts):
     lines = [
         "// 자동 생성 파일 — 직접 고치지 말 것. tools/make_font.py 로 다시 만든다.",
-        "// 글꼴: Pretendard (SIL Open Font License 1.1) — tools/fonts/OFL-LICENSE.txt",
+        "// 글꼴: Noto Sans KR (SIL Open Font License 1.1) — tools/fonts/NotoSansKR-OFL.txt",
         "#pragma once",
         "#include <stdint.h>",
         "",
@@ -133,7 +141,7 @@ def emit(fonts):
 
 def main():
     chars = charset()
-    fonts = [build(n, file, s, chars) for n, file, s in SIZES]
+    fonts = [build(n, file, s, wt, chars) for n, file, s, wt in SIZES]
     emit(fonts)
     for f in fonts:
         print(f"{f['name']}: 글자 {len(f['glyphs'])}개, 점 데이터 {len(f['bits']) // 1024}KB")
