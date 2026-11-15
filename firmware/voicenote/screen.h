@@ -32,4 +32,17 @@ void showPlaying(int number, uint32_t position, uint32_t total, bool partial);
 
 void showMessage(const char *title, const char *line);
 
+// ---------- 전송 모드 ----------
+enum class Step : uint8_t { Todo, Running, Done };
+
+// 단계 목록 (✓ 끝남 / ▶ 하는 중 / ○ 아직). progressPct 가 0~100 이면 아래에 진행 막대, -1 이면 숨김
+void showTransferSteps(const Step *states, const char *const *labels, int count, int progressPct,
+                       const char *clock, bool partial);
+
+// 폰에서 열 주소 안내. line1·line2: 아래 안내 두 줄 (없으면 nullptr)
+void showTransferReady(const char *host, const char *ip, const char *line1, const char *line2, const char *clock);
+
+// 와이파이를 못 찾았을 때
+void showNoWifi(const char *clock);
+
 } // namespace screen

@@ -4,7 +4,7 @@
 set -e
 cd "$(dirname "$0")/../firmware/voicenote"
 
-FQBN="esp32:esp32:esp32s3:PSRAM=opi,CDCOnBoot=cdc,USBMode=hwcdc"
+FQBN="esp32:esp32:esp32s3:PSRAM=opi,CDCOnBoot=cdc,USBMode=hwcdc,FlashSize=8M,PartitionScheme=default_8MB"
 BUILD="${TMPDIR:-/tmp}/voicenote_build"
 
 arduino-cli compile --fqbn "$FQBN" --build-path "$BUILD" .

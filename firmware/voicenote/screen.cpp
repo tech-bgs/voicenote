@@ -401,4 +401,57 @@ void showMessage(const char *title, const char *line) {
   flush(false);
 }
 
+// ---------- 전송 모드 ----------
+void showTransferSteps(const Step *states, const char *const *labels, int count, int progressPct,
+                       const char *clock, bool partial) {
+  g.clearBuffer();
+  statusBar(80, "전송 모드", clock);
+  int y = 50;
+  for (int i = 0; i < count; i++) {
+    if (states[i] == Step::Done) {
+      checkMark(12, y - 13, 1);
+    } else if (states[i] == Step::Running) {
+      g.drawTriangle(13, y - 14, 13, y - 2, 23, y - 8);
+    } else {
+      g.drawCircle(18, y - 8, 5);
+      g.drawCircle(18, y - 8, 4);
+    }
+    drawK(32, y, labels[i], KO18);
+    y += 26;
+  }
+  if (progressPct >= 0) {
+    const int x0 = 32, x1 = 188, py = 158;
+    g.drawRFrame(x0, py - 4, x1 - x0 + 1, 9, 4);
+    g.drawRFrame(x0 + 1, py - 3, x1 - x0 - 1, 7, 3);
+    const int w = (x1 - x0) * min(progressPct, 100) / 100;
+    if (w >= 8) g.drawRBox(x0, py - 4, w, 9, 4);
+  }
+  hintBar(nullptr, "그만 ▼");
+  flush(partial);
+}
+
+void showTransferReady(const char *host, const char *ip, const char *line1, const char *line2, const char *clock) {
+  g.clearBuffer();
+  statusBar(80, "전송 모드", clock);
+  textCenter(46, "폰에서 열어 보세요", KO18);
+  g.drawRBox(8, 54, 184, 63, 8);
+  textCenter(80, host, KO20, 0);
+  textCenter(108, ip, KO26, 0);
+  if (line1) textCenter(140, line1, KO18);
+  if (line2) textCenter(162, line2, KO18);
+  hintBar(nullptr, "끝내기 ▼");
+  flush(false);
+}
+
+void showNoWifi(const char *clock) {
+  g.clearBuffer();
+  statusBar(80, "전송 모드", clock);
+  textCenter(70, "와이파이를 못 찾았어요", KO20);
+  textCenter(104, "집 와이파이도", KO18);
+  textCenter(128, "휴대폰 핫스팟도 안 잡혀요", KO18);
+  textCenter(156, "녹음은 그대로 있어요", KO18);
+  hintBar("▲ 다시", "끝내기 ▼");
+  flush(false);
+}
+
 } // namespace screen

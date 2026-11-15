@@ -1,16 +1,17 @@
-// VOICE NOTE 펌웨어 — 3단계: 녹음 + 목록 + 내용 보기 + 스피커 재생
-// 아직 와이파이·변환은 없음.
+// VOICE NOTE 펌웨어 — 4단계(1): 녹음 + 목록 + 재생 + 전송 모드(와이파이 연결, 접속 주소 안내)
+// 아직 글자 변환·웹 목록은 없음.
 
 #include <Wire.h>
 
 #include "input.h"
+#include "net.h"
 #include "pins.h"
 #include "recorder.h"
 #include "rtc.h"
 #include "screen.h"
 #include "storage.h"
 
-enum class Page { Main, List, Detail, Playing, Recording, Message };
+enum class Page { Main, List, Detail, Playing, Recording, Message, Connecting, Ready, NoWifi };
 
 static Page page = Page::Main;
 static int selected = 0;
@@ -171,6 +172,92 @@ static void updateRecordingScreen() {
   screen::showRecording(recNumber, sec, levels, kLevelCount, freeMin, true);
 }
 
+// ---------- 전송 모드 (메인에서 ▼ 길게) ----------
+static const uint32_t kConnectTimeoutMs = 15000; // 와이파이 하나당 기다리는 시간
+static const uint32_t kReadyIdleMs = 5UL * 60 * 1000; // 폰이 5분 동안 안 열면 와이파이 끔
+static net::Wifi tryList[2];
+static int tryCount = 0;
+static int tryIndex = 0;
+static uint32_t tryStartedAt = 0;
+static uint32_t readyAt = 0;
+
+static const int kStepCount = 3;
+static screen::Step steps[kStepCount];
+static const char *stepLabels[kStepCount];
+
+static void drawSteps(bool partial) {
+  char clock[8];
+  rtc::timeText(clock, sizeof(clock));
+  screen::showTransferSteps(steps, stepLabels, kStepCount, -1, clock, partial);
+}
+
+static void tryNextWifi() {
+  const net::Wifi w = tryList[tryIndex];
+  net::startConnect(w);
+  tryStartedAt = millis();
+  stepLabels[0] = (w == net::Wifi::Home) ? "와이파이 찾는 중" : "핫스팟 찾는 중";
+}
+
+static void enterTransfer() {
+  tryCount = 0;
+  if (net::hasSettings(net::Wifi::Home)) tryList[tryCount++] = net::Wifi::Home;
+  if (net::hasSettings(net::Wifi::Phone)) tryList[tryCount++] = net::Wifi::Phone;
+  char clock[8];
+  rtc::timeText(clock, sizeof(clock));
+  if (tryCount == 0) {
+    page = Page::NoWifi;
+    screen::showNoWifi(clock);
+    return;
+  }
+  page = Page::Connecting;
+  steps[0] = screen::Step::Running;
+  steps[1] = screen::Step::Todo;
+  steps[2] = screen::Step::Todo;
+  stepLabels[1] = "글자로 변환";
+  stepLabels[2] = "폰에서 보기 준비";
+  tryIndex = 0;
+  tryNextWifi();
+  drawSteps(false);
+}
+
+static void leaveTransfer() {
+  net::stop();
+  goMain();
+}
+
+static void showReady() {
+  page = Page::Ready;
+  readyAt = millis();
+  char clock[8], line1[32];
+  rtc::timeText(clock, sizeof(clock));
+  snprintf(line1, sizeof(line1), "녹음 %d개", noteCount);
+  screen::showTransferReady("voicenote.local", net::ipText(), line1, "5분 뒤 와이파이를 꺼요", clock);
+}
+
+static void updateConnecting() {
+  if (net::isConnected()) {
+    steps[0] = screen::Step::Done;
+    stepLabels[0] = (tryList[tryIndex] == net::Wifi::Home) ? "와이파이: 집" : "와이파이: 휴대폰";
+    steps[1] = screen::Step::Done; // 변환은 다음 단계에서. 지금은 건너뜀
+    steps[2] = screen::Step::Running;
+    drawSteps(true);
+    net::startServer();
+    showReady();
+    return;
+  }
+  if (millis() - tryStartedAt < kConnectTimeoutMs) return;
+  if (++tryIndex < tryCount) {
+    tryNextWifi();
+    drawSteps(true);
+    return;
+  }
+  net::stop();
+  page = Page::NoWifi;
+  char clock[8];
+  rtc::timeText(clock, sizeof(clock));
+  screen::showNoWifi(clock);
+}
+
 // ---------- 시작 ----------
 void setup() {
   pinMode(PIN_VBAT_HOLD, OUTPUT);
@@ -178,7 +265,7 @@ void setup() {
 
   Serial.begin(115200);
   delay(300);
-  Serial.println("[voicenote] boot step3 (detail + playback)");
+  Serial.println("[voicenote] boot step4-1 (wifi + transfer screens)");
 
   pinMode(PIN_BTN_TOP, INPUT_PULLUP);
   pinMode(PIN_BTN_PWR, INPUT_PULLUP);
@@ -206,6 +293,31 @@ void loop() {
         startRecording();
       } else if (b == Press::Short) {
         goList();
+      } else if (b == Press::Long && sdOk) {
+        enterTransfer();
+      }
+      break;
+
+    case Page::Connecting:
+      if (b == Press::Short) {
+        leaveTransfer();
+      } else {
+        updateConnecting();
+      }
+      break;
+
+    case Page::Ready: {
+      net::handle();
+      const uint32_t since = max(readyAt, net::lastVisitMs());
+      if (b == Press::Short || millis() - since > kReadyIdleMs) leaveTransfer();
+      break;
+    }
+
+    case Page::NoWifi:
+      if (t == Press::Short) {
+        enterTransfer();
+      } else if (b == Press::Short) {
+        goMain();
       }
       break;
 
