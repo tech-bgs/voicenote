@@ -30,11 +30,10 @@ static void flush(bool partial, bool allowCleanup = true) {
       if (row[x] & bit) frame[y * 25 + x / 8] &= ~(0x80 >> (x % 8));
     }
   }
-  if (partial) {
-    epd::showPartial(frame, allowCleanup);
-  } else {
-    epd::showFull(frame);
-  }
+  // 화면을 바꿀 때도 빠른 부분 갱신을 쓴다 (전체 갱신은 2초쯤 걸리고 깜빡임).
+  // 처음 켤 때와 부분 갱신 10번마다는 epd 쪽에서 알아서 전체 갱신으로 잔상을 지운다.
+  (void)partial;
+  epd::showPartial(frame, allowCleanup);
 }
 
 // ---------- 한글 글자 그리기 ----------
