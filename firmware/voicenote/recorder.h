@@ -1,4 +1,4 @@
-// 녹음: 마이크 → SD카드 WAV 파일 (16kHz, 16비트, 모노)
+// 녹음: 마이크 → SD카드 WAV 파일 (16kHz, 16비트, 모노). 재생: SD카드 WAV → 스피커
 // 화면을 그리는 동안에도 소리가 끊기지 않게, 녹음은 별도 작업(task)에서 돈다.
 #pragma once
 #include <Arduino.h>
@@ -18,5 +18,13 @@ uint8_t level();
 
 // 녹음 중 문제 (SD 쓰기 실패 등) 생겼으면 true
 bool hadError();
+
+// ---------- 재생 (스피커) ----------
+// 이 기기에서 녹음한 형식(16kHz, 16비트, 모노) WAV만 재생. 아니면 false
+bool playStart(const char *path);
+void playStop();
+bool isPlaying(); // 끝까지 재생되면 저절로 false
+uint32_t playPositionSeconds();
+uint32_t playLengthSeconds();
 
 } // namespace recorder

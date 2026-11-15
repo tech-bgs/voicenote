@@ -262,6 +262,138 @@ void showRecording(int number, uint32_t seconds, const uint8_t *levels, int leve
   flush(partial, false); // 녹음 중엔 잔상 정리용 전체 갱신(깜빡임) 안 함
 }
 
+// ---------- 줄바꿈 ----------
+
+static int advOf(const KFont &f, uint16_t code) {
+  const KGlyph *gl = findGlyph(f, code);
+  return gl ? gl->adv : f.height / 2;
+}
+
+// text를 maxW 폭으로 잘라 lines[]에 담는다. 넘치면 마지막 줄 끝에 "…"
+static int wrapText(const char *text, const KFont &f, int maxW, char lines[][96], int maxLines) {
+  int count = 0;
+  const char *p = text;
+  while (*p == ' ') p++;
+  while (*p && count < maxLines) {
+    const char *lineStart = p;
+    const char *lastSpace = nullptr;
+    const char *q = p;
+    int w = 0;
+    while (*q) {
+      const char *before = q;
+      const uint16_t code = nextCode(q);
+      const int a = advOf(f, code);
+      if (w + a > maxW) {
+        q = before;
+        break;
+      }
+      if (code == ' ') lastSpace = before;
+      w += a;
+    }
+    const char *lineEnd = q;
+    const char *next = q;
+    // 띄어쓰기에서 끊을 수 있으면 거기서 (단어 중간에서 안 끊기게)
+    if (*q && lastSpace && (lastSpace - lineStart) > (q - lineStart) / 2) {
+      lineEnd = lastSpace;
+      next = lastSpace + 1;
+    }
+    size_t len = min((size_t)(lineEnd - lineStart), (size_t)95);
+    memcpy(lines[count], lineStart, len);
+    lines[count][len] = 0;
+    count++;
+    p = next;
+    while (*p == ' ') p++;
+  }
+  if (*p && count > 0) { // 다 못 담았으면 마지막 줄을 줄이고 "…"
+    char *last = lines[count - 1];
+    while (strlen(last) > 0 && widthK(f, last) + advOf(f, 0x2026) > maxW) {
+      size_t l = strlen(last);
+      do l--; while (l > 0 && ((uint8_t)last[l] & 0xC0) == 0x80);
+      last[l] = 0;
+    }
+    strcat(last, "…");
+  }
+  return count;
+}
+
+static void lengthLong(char *out, size_t n, uint32_t seconds) {
+  if (seconds < 60) {
+    snprintf(out, n, "%lu초", (unsigned long)seconds);
+  } else {
+    snprintf(out, n, "%lu분 %lu초", (unsigned long)(seconds / 60), (unsigned long)(seconds % 60));
+  }
+}
+
+void showDetail(int number, uint32_t seconds, time_t when, bool converted, const char *preview, const char *clock) {
+  g.clearBuffer();
+  statusBar(80, "녹음 보기", (clock && clock[0]) ? clock : nullptr);
+
+  char no[8];
+  snprintf(no, sizeof(no), "#%03d", number);
+  drawK(10, 52, no, KO26);
+  char len[24];
+  lengthLong(len, sizeof(len), seconds);
+  textRight(190, 50, len, KO18);
+
+  char date[40];
+  struct tm t;
+  localtime_r(&when, &t);
+  if (when > 0 && t.tm_year >= 125) {
+    const int h12 = t.tm_hour % 12 == 0 ? 12 : t.tm_hour % 12;
+    snprintf(date, sizeof(date), "%d월 %d일 %s %d:%02d", t.tm_mon + 1, t.tm_mday, t.tm_hour < 12 ? "오전" : "오후",
+             h12, t.tm_min);
+  } else {
+    snprintf(date, sizeof(date), "날짜 없음");
+  }
+  drawK(10, 76, date, KO18);
+  g.drawHLine(10, 88, 180);
+
+  if (converted && preview && preview[0]) {
+    static char lines[3][96];
+    const int n = wrapText(preview, KO18, 180, lines, 3);
+    for (int i = 0; i < n; i++) drawK(10, 108 + i * 22, lines[i], KO18);
+  } else {
+    textCenter(114, "아직 변환 전이에요", KO18);
+    textCenter(140, "와이파이에 연결하면", KO18);
+    textCenter(162, "글자로 바뀌어요", KO18);
+  }
+  hintBar("▲ 재생", "뒤로 ▼");
+  flush(false);
+}
+
+void showPlaying(int number, uint32_t position, uint32_t total, bool partial) {
+  g.clearBuffer();
+  char no[8];
+  snprintf(no, sizeof(no), "#%03d", number);
+  statusBar(80, "재생 중", no);
+
+  // 가운데 큰 원 + 일시정지 모양 (재생 중이라는 표시)
+  const int cx = 100, cy = 72;
+  g.drawDisc(cx, cy, 30);
+  g.setDrawColor(0);
+  g.drawBox(cx - 10, cy - 13, 7, 27);
+  g.drawBox(cx + 4, cy - 13, 7, 27);
+  g.setDrawColor(1);
+
+  // 진행 막대
+  const int x0 = 14, x1 = 186, y = 128;
+  g.drawRFrame(x0, y - 4, x1 - x0 + 1, 9, 4);
+  g.drawRFrame(x0 + 1, y - 3, x1 - x0 - 1, 7, 3);
+  if (total > 0) {
+    const int w = (int)((x1 - x0) * min(position, total) / total);
+    if (w >= 8) g.drawRBox(x0, y - 4, w, 9, 4);
+  }
+
+  char a[12], b[12];
+  snprintf(a, sizeof(a), "%lu:%02lu", (unsigned long)(position / 60), (unsigned long)(position % 60));
+  snprintf(b, sizeof(b), "%lu:%02lu", (unsigned long)(total / 60), (unsigned long)(total % 60));
+  drawK(14, 156, a, KO20);
+  textRight(186, 156, b, KO20);
+
+  hintBar("▲ 멈춤", "뒤로 ▼");
+  flush(partial, false); // 재생 중엔 깜빡임 없이
+}
+
 void showMessage(const char *title, const char *line) {
   g.clearBuffer();
   textCenter(95, title, KO26);

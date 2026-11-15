@@ -83,6 +83,30 @@ int nextNumber() {
 
 void wavPath(int number, char *out, size_t n) { snprintf(out, n, "%s/rec_%03d.wav", kDir, number); }
 
+bool textPreview(int number, char *out, size_t n) {
+  out[0] = 0;
+  char p[48];
+  snprintf(p, sizeof(p), "%s/rec_%03d.txt", kDir, number);
+  if (!SD_MMC.exists(p)) snprintf(p, sizeof(p), "%s/rec_%03d.wav.txt", kDir, number);
+  File f = SD_MMC.open(p, FILE_READ);
+  if (!f) return false;
+  size_t len = f.read((uint8_t *)out, n - 1);
+  f.close();
+  // 한글(UTF-8 3바이트) 중간에서 잘렸으면 그 글자는 버린다
+  size_t lead = len;
+  while (lead > 0 && ((uint8_t)out[lead - 1] & 0xC0) == 0x80) lead--; // 마지막 글자의 첫 바이트 찾기
+  if (lead > 0) {
+    const uint8_t c = out[lead - 1];
+    const size_t need = c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : c >= 0xC0 ? 2 : 1;
+    if (len - (lead - 1) < need) len = lead - 1; // 덜 읽힌 글자면 버림
+  }
+  out[len] = 0;
+  // 줄바꿈은 띄어쓰기로
+  for (size_t i = 0; i < len; i++)
+    if (out[i] == '\n' || out[i] == '\r' || out[i] == '\t') out[i] = ' ';
+  return true;
+}
+
 uint32_t freeMinutes() {
   const uint64_t freeBytes = SD_MMC.totalBytes() - SD_MMC.usedBytes();
   return freeBytes / kBytesPerSec / 60;

@@ -24,6 +24,12 @@ void showList(const NoteRow *rows, int total, int selected, int batteryPct, bool
 void showRecording(int number, uint32_t seconds, const uint8_t *levels, int levelCount, uint32_t freeMinutes,
                    bool partial);
 
+// 녹음 하나 열어 보기. preview: 변환된 글 앞부분 (없으면 nullptr)
+void showDetail(int number, uint32_t seconds, time_t when, bool converted, const char *preview, const char *clock);
+
+// 재생 중 화면 (1초마다 partial=true 로 다시 그림)
+void showPlaying(int number, uint32_t position, uint32_t total, bool partial);
+
 void showMessage(const char *title, const char *line);
 
 } // namespace screen

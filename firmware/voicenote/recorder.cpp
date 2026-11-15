@@ -20,12 +20,14 @@ static const size_t kRingSize = 256 * 1024;   // 소리 임시 저장 (약 8초)
 static const es8311_mic_gain_t kMicGain = ES8311_MIC_GAIN_36DB;
 
 static I2SClass i2s;
+static es8311_handle_t es = nullptr;
 static RingbufHandle_t ring = nullptr;
 static File file;
 static TaskHandle_t readerTask = nullptr;
 static TaskHandle_t writerTask = nullptr;
 
 static volatile bool running = false;
+static volatile bool playDone = true; // 재생 작업이 끝났는지 (재생 코드는 아래쪽)
 static volatile bool readerDone = false;
 static volatile bool writerDone = false;
 static volatile bool error = false;
@@ -146,7 +148,7 @@ bool begin() {
   digitalWrite(PIN_SPK_AMP, LOW); // 녹음 땐 스피커 끔 (잡음 방지)
   delay(20);
 
-  es8311_handle_t es = es8311_create(I2C_NUM_0, ES8311_ADDRRES_0);
+  es = es8311_create(I2C_NUM_0, ES8311_ADDRRES_0);
   if (!es) {
     Serial.println("[rec] es8311 create failed");
     return false;
@@ -181,7 +183,7 @@ bool begin() {
 }
 
 bool start(const char *path) {
-  if (running) return false;
+  if (running || !playDone) return false;
   file = SD_MMC.open(path, FILE_WRITE);
   if (!file) {
     Serial.printf("[rec] cannot open %s\n", path);
@@ -222,6 +224,99 @@ uint32_t stop() {
                 (unsigned long)clippedSamples, gainCount ? gainSum / gainCount : 0.0f);
   return secs;
 }
+
+// ---------- 재생 (스피커) ----------
+
+static const int kSpeakerVolume = 75; // 스피커 소리 크기 0~100
+static File playFile;
+static volatile bool playing = false;
+static volatile uint32_t playDataBytes = 0;
+static volatile uint32_t playedBytes = 0;
+
+// WAV 파일 앞부분을 읽어 형식 확인 후 소리 데이터 시작 위치로 옮긴다
+static bool openWav(File &f, uint32_t &dataBytes) {
+  uint8_t h[12];
+  if (f.read(h, 12) != 12 || memcmp(h, "RIFF", 4) || memcmp(h + 8, "WAVE", 4)) return false;
+  bool fmtOk = false;
+  for (int guard = 0; guard < 16; guard++) {
+    uint8_t ch[8];
+    if (f.read(ch, 8) != 8) return false;
+    const uint32_t len = ch[4] | (ch[5] << 8) | (ch[6] << 16) | ((uint32_t)ch[7] << 24);
+    if (!memcmp(ch, "fmt ", 4)) {
+      uint8_t fm[16];
+      if (len < 16 || f.read(fm, 16) != 16) return false;
+      const uint16_t channels = fm[2] | (fm[3] << 8);
+      const uint32_t rate = fm[4] | (fm[5] << 8) | (fm[6] << 16) | ((uint32_t)fm[7] << 24);
+      const uint16_t bits = fm[14] | (fm[15] << 8);
+      Serial.printf("[play] format %lu Hz, %u ch, %u bit\n", (unsigned long)rate, channels, bits);
+      fmtOk = (rate == kRate && channels == 1 && bits == 16);
+      if (len > 16) f.seek(f.position() + len - 16);
+    } else if (!memcmp(ch, "data", 4)) {
+      // 녹음 중 꺼져서 길이가 0으로 남은 파일은 파일 크기로 계산
+      dataBytes = len ? len : (f.size() - f.position());
+      dataBytes = min(dataBytes, (uint32_t)(f.size() - f.position()));
+      return fmtOk;
+    } else {
+      f.seek(f.position() + len + (len & 1));
+    }
+  }
+  return false;
+}
+
+static void playLoop(void *) {
+  static uint8_t buf[4096];
+  while (playing && playedBytes < playDataBytes) {
+    const size_t want = min((uint32_t)sizeof(buf), playDataBytes - playedBytes);
+    const size_t got = playFile.read(buf, want);
+    if (got == 0) break;
+    i2s.write(buf, got);
+    playedBytes += got;
+  }
+  // 끝에 '딱' 소리 안 나게 조용한 소리를 조금 보낸다
+  memset(buf, 0, sizeof(buf));
+  i2s.write(buf, sizeof(buf));
+  digitalWrite(PIN_SPK_AMP, LOW);
+  playFile.close();
+  playing = false;
+  playDone = true;
+  vTaskDelete(nullptr);
+}
+
+bool playStart(const char *path) {
+  if (running || !playDone) return false;
+  playFile = SD_MMC.open(path, FILE_READ);
+  if (!playFile) {
+    Serial.printf("[play] cannot open %s\n", path);
+    return false;
+  }
+  uint32_t dataBytes = 0;
+  if (!openWav(playFile, dataBytes)) {
+    Serial.println("[play] unsupported wav");
+    playFile.close();
+    return false;
+  }
+  playDataBytes = dataBytes;
+  playedBytes = 0;
+  es8311_voice_mute(es, false);
+  es8311_voice_volume_set(es, kSpeakerVolume, nullptr);
+  digitalWrite(PIN_SPK_AMP, HIGH); // 스피커 앰프 켬
+  playing = true;
+  playDone = false;
+  xTaskCreatePinnedToCore(playLoop, "play", 4096, nullptr, 10, nullptr, 0);
+  Serial.printf("[play] start %s (%lu s)\n", path, (unsigned long)(dataBytes / kBytesPerSec));
+  return true;
+}
+
+void playStop() {
+  if (playDone) return;
+  playing = false;
+  while (!playDone) delay(5);
+  Serial.println("[play] stop");
+}
+
+bool isPlaying() { return !playDone; }
+uint32_t playPositionSeconds() { return playedBytes / kBytesPerSec; }
+uint32_t playLengthSeconds() { return playDataBytes / kBytesPerSec; }
 
 bool isRecording() { return running; }
 uint32_t elapsedSeconds() { return running ? (millis() - startedAt) / 1000 : 0; }

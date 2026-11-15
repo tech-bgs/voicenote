@@ -1,5 +1,5 @@
-// VOICE NOTE 펌웨어 — 2단계: 녹음 (SD카드 WAV 저장) + 실제 목록
-// 아직 재생·와이파이·변환은 없음.
+// VOICE NOTE 펌웨어 — 3단계: 녹음 + 목록 + 내용 보기 + 스피커 재생
+// 아직 와이파이·변환은 없음.
 
 #include <Wire.h>
 
@@ -10,12 +10,13 @@
 #include "screen.h"
 #include "storage.h"
 
-enum class Page { Main, List, Recording, Message };
+enum class Page { Main, List, Detail, Playing, Recording, Message };
 
 static Page page = Page::Main;
 static int selected = 0;
 static bool sdOk = false;
 static bool recOk = false;
+static Page afterMessage = Page::Main; // 안내 화면에서 버튼 누르면 돌아갈 곳
 
 // ---------- 녹음 목록 (SD카드에서 읽음) ----------
 static const int kMaxNotes = 200;
@@ -53,7 +54,7 @@ static int batteryPct() { return 80; } // 배터리 읽기는 다음 단계
 
 // ---------- 화면 이동 ----------
 static const char *mainTopHint() { return (sdOk && recOk) ? "▲ 녹음" : nullptr; }
-static const char *const kListTopHint = "▲ 뒤로"; // 재생 붙이면 "▲ 선택"
+static const char *const kListTopHint = "▲ 선택";
 
 static void goMain() {
   page = Page::Main;
@@ -67,15 +68,59 @@ static void goMain() {
   screen::showMain(noteCount, pendingCount(), batteryPct(), mainTopHint(), clock);
 }
 
+static void showMessage(const char *title, const char *line, Page returnTo) {
+  page = Page::Message;
+  afterMessage = returnTo;
+  screen::showMessage(title, line);
+}
+
+// 목록 다시 보이기 (선택 위치 유지)
+static void showListAgain() {
+  page = Page::List;
+  if (selected >= noteCount) selected = 0;
+  screen::showList(rows, noteCount, selected, batteryPct(), false, kListTopHint); // 들어갈 땐 전체 갱신
+}
+
 static void goList() {
   if (noteCount == 0) {
-    page = Page::Message;
-    screen::showMessage("녹음이 없어요", "아무 버튼: 돌아가기");
+    showMessage("녹음이 없어요", "아무 버튼: 돌아가기", Page::Main);
     return;
   }
-  page = Page::List;
   selected = 0;
-  screen::showList(rows, noteCount, selected, batteryPct(), false, kListTopHint); // 들어갈 땐 전체 갱신
+  showListAgain();
+}
+
+// ---------- 내용 보기 · 재생 ----------
+static char preview[400];
+static uint32_t lastPlaySec = 0;
+
+static void openDetail() {
+  page = Page::Detail;
+  const storage::Note &n = notes[selected];
+  const bool hasText = n.converted && storage::textPreview(n.number, preview, sizeof(preview));
+  char clock[8];
+  rtc::timeText(clock, sizeof(clock));
+  screen::showDetail(n.number, n.seconds, n.when, n.converted, hasText ? preview : nullptr, clock);
+}
+
+static void startPlay() {
+  const storage::Note &n = notes[selected];
+  char path[48];
+  storage::wavPath(n.number, path, sizeof(path));
+  if (!recorder::playStart(path)) {
+    showMessage("재생할 수 없어요", "이 기기에서 녹음한 것만 돼요", Page::Detail);
+    return;
+  }
+  page = Page::Playing;
+  lastPlaySec = 0;
+  screen::showPlaying(n.number, 0, recorder::playLengthSeconds(), false);
+}
+
+static void updatePlayingScreen() {
+  const uint32_t sec = recorder::playPositionSeconds();
+  if (sec == lastPlaySec) return;
+  lastPlaySec = sec;
+  screen::showPlaying(notes[selected].number, sec, recorder::playLengthSeconds(), true);
 }
 
 // ---------- 녹음 ----------
@@ -92,8 +137,7 @@ static void startRecording() {
   storage::wavPath(recNumber, path, sizeof(path));
   freeMin = storage::freeMinutes();
   if (!recorder::start(path)) {
-    page = Page::Message;
-    screen::showMessage("녹음을 시작 못 했어요", "아무 버튼: 돌아가기");
+    showMessage("녹음을 시작 못 했어요", "아무 버튼: 돌아가기", Page::Main);
     return;
   }
   page = Page::Recording;
@@ -108,8 +152,7 @@ static void stopRecording() {
   const bool err = recorder::hadError();
   refreshNotes();
   if (err) {
-    page = Page::Message;
-    screen::showMessage("저장 중 문제가 있었어요", "일부 소리가 빠졌을 수 있어요");
+    showMessage("저장 중 문제가 있었어요", "일부 소리가 빠졌을 수 있어요", Page::Main);
     Serial.printf("[rec] saved #%03d with errors (%lu s)\n", recNumber, (unsigned long)secs);
     return;
   }
@@ -135,7 +178,7 @@ void setup() {
 
   Serial.begin(115200);
   delay(300);
-  Serial.println("[voicenote] boot step2 (recording)");
+  Serial.println("[voicenote] boot step3 (detail + playback)");
 
   pinMode(PIN_BTN_TOP, INPUT_PULLUP);
   pinMode(PIN_BTN_PWR, INPUT_PULLUP);
@@ -178,13 +221,43 @@ void loop() {
       if (b == Press::Short) {
         selected = (selected + 1) % noteCount;
         screen::showList(rows, noteCount, selected, batteryPct(), true, kListTopHint); // 깜빡임 없이
-      } else if (t == Press::Short || b == Press::Long) {
+      } else if (t == Press::Short) {
+        openDetail();
+      } else if (b == Press::Long) {
         goMain();
       }
       break;
 
+    case Page::Detail:
+      if (t == Press::Short) {
+        startPlay();
+      } else if (b == Press::Short) {
+        showListAgain();
+      }
+      break;
+
+    case Page::Playing:
+      if (t == Press::Short) {
+        recorder::playStop();
+        openDetail();
+      } else if (b == Press::Short) {
+        recorder::playStop();
+        showListAgain();
+      } else if (!recorder::isPlaying()) {
+        openDetail(); // 끝까지 재생됨
+      } else {
+        updatePlayingScreen();
+      }
+      break;
+
     case Page::Message:
-      if (sdOk && (t != Press::None || b != Press::None)) goMain();
+      if (sdOk && (t != Press::None || b != Press::None)) {
+        if (afterMessage == Page::Detail) {
+          openDetail();
+        } else {
+          goMain();
+        }
+      }
       break;
   }
   delay(10);
