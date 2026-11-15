@@ -217,11 +217,13 @@ async function showDetail(x) {
     </div>`;
     bind();
   }
-  function busy(msg) {
+  // 진행 안내. fail=true 면 실패 이유를 남겨 두고 버튼은 다시 누를 수 있게
+  function busy(msg, fail) {
     const b = $("busy");
     b.style.display = msg ? "block" : "none";
     b.textContent = msg || "";
-    main.querySelectorAll("#sumBtn,#spkBtn").forEach((e) => e.disabled = !!msg);
+    b.style.color = fail ? "#c62f2f" : "";
+    main.querySelectorAll("#sumBtn,#spkBtn").forEach((e) => e.disabled = !!msg && !fail);
   }
   function bind() {
     main.querySelectorAll(".tab").forEach((t) => t.onclick = () => { view = t.dataset.v; render(); });
@@ -242,25 +244,25 @@ async function showDetail(x) {
       try {
         const r = await fetch("/api/summary?n=" + x.n, {method: "POST"});
         const t = await r.text();
-        if (r.ok) { summary = t; render(); } else { busy(""); toast(t || "요약하지 못했어요"); }
-      } catch (e) { busy(""); toast("기기와 연결이 끊겼어요"); }
+        if (r.ok) { summary = t; render(); } else busy("요약 실패: " + (t || "이유 모름"), true);
+      } catch (e) { busy("기기와 연결이 끊겼어요. 전송 모드가 켜져 있는지 봐 주세요", true); }
     };
     const kb = $("spkBtn");
     if (kb) kb.onclick = async () => {
-      busy("녹음을 올리는 중…");
+      busy("1/2 녹음을 AssemblyAI에 올리는 중… (2분 녹음이면 30초쯤)");
       if (DEMO) { await new Promise((r) => setTimeout(r, 800)); spk = demoSpeakers; view = "spk"; return render(); }
-      // 시작하고, 끝날 때까지 5초마다 확인
+      // 첫 요청: 녹음을 올리고 작업 시작. 그다음부터 5초마다 끝났는지 확인
+      const t0 = Date.now();
       for (let i = 0; i < 240; i++) {
         let j;
         try { j = await (await fetch("/api/speakers?n=" + x.n, {method: "POST"})).json(); }
-        catch (e) { busy(""); return toast("기기와 연결이 끊겼어요"); }
+        catch (e) { return busy("기기와 연결이 끊겼어요. 다시 누르면 이어서 확인해요", true); }
         if (j.state === "done") { spk = await getStored("speakers", x.n); view = "spk"; return render(); }
-        if (j.state === "failed") { busy(""); return toast(j.error || "화자를 나누지 못했어요"); }
-        busy(`화자 나누는 중… 녹음 길이의 3분의 1쯤 걸려요 (${i * 5}초)`);
+        if (j.state === "failed") return busy("화자 나누기 실패: " + (j.error || "이유 모름"), true);
+        busy(`2/2 AssemblyAI가 화자를 나누는 중… (${Math.round((Date.now() - t0) / 1000)}초)`);
         await new Promise((r) => setTimeout(r, 5000));
       }
-      busy("");
-      toast("너무 오래 걸려요. 잠시 뒤 다시 눌러 주세요");
+      busy("20분이 넘었어요. 잠시 뒤 다시 누르면 이어서 확인해요", true);
     };
     $("del").onclick = async () => {
       if (!confirm(`${pad3(x.n)} 녹음과 글을 지울까요?\n지우면 되돌릴 수 없어요.`)) return;

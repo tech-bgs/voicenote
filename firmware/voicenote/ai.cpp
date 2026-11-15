@@ -195,6 +195,7 @@ static String assemblyAuth() { return String("authorization: ") + ASSEMBLYAI_API
 
 // 녹음 파일을 AssemblyAI에 올리고 작업 번호를 받아 저장
 static bool startSpeakers(int n, String &err) {
+  const uint32_t t0 = millis();
   char path[48];
   storage::wavPath(n, path, sizeof(path));
   File f = SD_MMC.open(path, FILE_READ);
@@ -209,6 +210,7 @@ static bool startSpeakers(int n, String &err) {
     if (!startRequest(c, kAssembly, "POST", "/v2/upload", assemblyAuth(), "application/octet-stream", size)) {
       f.close();
       err = "AssemblyAI 연결 실패";
+      Serial.printf("[ai] speakers #%03d: upload connect failed\n", n);
       return false;
     }
     // SD에서 조금씩 읽어 바로 보냄
@@ -221,6 +223,7 @@ static bool startSpeakers(int n, String &err) {
     f.close();
     if (left > 0) {
       err = "녹음 올리기 끊김";
+      Serial.printf("[ai] speakers #%03d: upload cut (%lu bytes left)\n", n, (unsigned long)left);
       return false;
     }
     const int status = readHead(c, 60000);
@@ -270,7 +273,7 @@ static bool startSpeakers(int n, String &err) {
     err = "작업 번호 저장 실패";
     return false;
   }
-  Serial.printf("[ai] speakers #%03d started\n", n);
+  Serial.printf("[ai] speakers #%03d started (%lu ms)\n", n, (unsigned long)(millis() - t0));
   return true;
 }
 
@@ -278,8 +281,9 @@ static bool startSpeakers(int n, String &err) {
 static Speakers checkSpeakers(int n, const String &id, String &err) {
   NetworkClientSecure c;
   if (!startRequest(c, kAssembly, "GET", String("/v2/transcript/") + id, assemblyAuth(), nullptr, 0)) {
-    err = "AssemblyAI 연결 실패";
-    return Speakers::Failed;
+    // 잠깐 연결이 안 된 것일 수 있음 → 실패로 끝내지 않고 다음 확인 때 다시
+    Serial.printf("[ai] speakers #%03d check: connect failed (retry)\n", n);
+    return Speakers::Working;
   }
   const int status = readHead(c, 30000);
   JsonDocument filter;
@@ -290,11 +294,19 @@ static Speakers checkSpeakers(int n, const String &id, String &err) {
   JsonDocument res;
   const DeserializationError je = deserializeJson(res, c, DeserializationOption::Filter(filter));
   c.stop();
-  if (status != 200 || je) {
-    err = String("확인 오류 ") + status;
+  const String st = res["status"] | "";
+  Serial.printf("[ai] speakers #%03d check: http %d, status=%s, json=%s\n", n, status, st.c_str(), je.c_str());
+  if (status == 0 || status == 429 || status >= 500 || (status == 200 && je)) {
+    return Speakers::Working; // 일시적인 문제 → 다음 확인 때 다시
+  }
+  if (status != 200) {
+    const char *m = res["error"] | "";
+    err = String("확인 오류 ") + status + (strlen(m) ? String(": ") + m : String());
+    char jp[48];
+    jobPath(n, jp, sizeof(jp));
+    SD_MMC.remove(jp); // 작업 번호가 잘못됨 → 다음엔 처음부터
     return Speakers::Failed;
   }
-  const String st = res["status"] | "";
   if (st == "queued" || st == "processing") return Speakers::Working;
 
   char path[48];
@@ -314,11 +326,13 @@ static Speakers checkSpeakers(int n, const String &id, String &err) {
   }
   if (!out.length()) {
     err = "화자를 찾지 못했어요";
+    Serial.printf("[ai] speakers #%03d: no utterances\n", n);
     return Speakers::Failed;
   }
   speakersPath(n, path, sizeof(path));
   if (!writeFile(path, out)) {
     err = "결과 저장 실패";
+    Serial.printf("[ai] speakers #%03d: save failed\n", n);
     return Speakers::Failed;
   }
   Serial.printf("[ai] speakers #%03d done\n", n);
