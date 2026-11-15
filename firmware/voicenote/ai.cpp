@@ -190,6 +190,33 @@ bool summarize(int n, String &err) {
   return true;
 }
 
+// 응답 본문 전체를 PSRAM에 받는다 (큰 응답을 바로 JSON으로 읽으면 중간에 끊기는 문제가 있었음)
+// 다 받으면 길이를, 실패하면 -1. 다 쓴 뒤 free(*out)
+static long readBodyToPsram(NetworkClientSecure &c, char **out, size_t cap) {
+  char *mem = (char *)ps_malloc(cap + 1);
+  if (!mem) return -1;
+  size_t len = 0;
+  uint32_t lastData = millis();
+  while (millis() - lastData < 15000) {
+    const int a = c.available();
+    if (a > 0) {
+      if (len >= cap) break; // 너무 큼
+      const int r = c.read((uint8_t *)mem + len, min((size_t)a, cap - len));
+      if (r > 0) {
+        len += r;
+        lastData = millis();
+        continue;
+      }
+    } else if (!c.connected()) {
+      break;
+    }
+    delay(2);
+  }
+  mem[len] = 0;
+  *out = mem;
+  return (long)len;
+}
+
 // ---------- 화자 나누기 ----------
 static String assemblyAuth() { return String("authorization: ") + ASSEMBLYAI_API_KEY + "\r\n"; }
 
@@ -291,11 +318,16 @@ static Speakers checkSpeakers(int n, const String &id, String &err) {
   filter["error"] = true;
   filter["utterances"][0]["speaker"] = true;
   filter["utterances"][0]["text"] = true;
-  JsonDocument res;
-  const DeserializationError je = deserializeJson(res, c, DeserializationOption::Filter(filter));
+  char *body = nullptr;
+  const long bodyLen = readBodyToPsram(c, &body, 4 * 1024 * 1024);
   c.stop();
+  JsonDocument res;
+  DeserializationError je = DeserializationError::EmptyInput;
+  if (bodyLen > 0) je = deserializeJson(res, body, bodyLen, DeserializationOption::Filter(filter));
+  free(body);
   const String st = res["status"] | "";
-  Serial.printf("[ai] speakers #%03d check: http %d, status=%s, json=%s\n", n, status, st.c_str(), je.c_str());
+  Serial.printf("[ai] speakers #%03d check: http %d, %ld bytes, status=%s, json=%s\n", n, status, bodyLen, st.c_str(),
+                je.c_str());
   if (status == 0 || status == 429 || status >= 500 || (status == 200 && je)) {
     return Speakers::Working; // 일시적인 문제 → 다음 확인 때 다시
   }
