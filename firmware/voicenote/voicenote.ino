@@ -1,5 +1,5 @@
-// VOICE NOTE 펌웨어 — 4단계(1): 녹음 + 목록 + 재생 + 전송 모드(와이파이 연결, 접속 주소 안내)
-// 아직 글자 변환·웹 목록은 없음.
+// VOICE NOTE 펌웨어 — 4단계(2): 녹음 + 목록 + 재생 + 전송 모드(와이파이 → 글자 변환 → 접속 주소 안내)
+// 아직 웹 목록은 없음.
 
 #include <Wire.h>
 
@@ -10,6 +10,7 @@
 #include "rtc.h"
 #include "screen.h"
 #include "storage.h"
+#include "stt.h"
 
 enum class Page { Main, List, Detail, Playing, Recording, Message, Connecting, Ready, NoWifi };
 
@@ -225,20 +226,87 @@ static void leaveTransfer() {
   goMain();
 }
 
+static int convertedNow = 0; // 이번 전송 모드에서 새로 변환한 개수
+static int failedNow = 0;
+
 static void showReady() {
   page = Page::Ready;
   readyAt = millis();
-  char clock[8], line1[32];
+  char clock[8], line1[40];
   rtc::timeText(clock, sizeof(clock));
-  snprintf(line1, sizeof(line1), "녹음 %d개", noteCount);
+  if (failedNow > 0) {
+    snprintf(line1, sizeof(line1), "성공 %d · 실패 %d", convertedNow, failedNow);
+  } else {
+    snprintf(line1, sizeof(line1), "새로 변환 %d개", convertedNow);
+  }
   screen::showTransferReady("voicenote.local", net::ipText(), line1, "5분 뒤 와이파이를 꺼요", clock);
+}
+
+// 변환 중 진행 막대 + ▼로 그만두기
+static char convertLabel[32];
+static int lastPct = -100;
+
+static bool onConvertProgress(uint32_t done, uint32_t total) {
+  if (readButton(bottom, false) == Press::Short) return false;
+  const int pct = total ? (int)((uint64_t)done * 100 / total) : 0;
+  if (pct - lastPct >= 10 || (pct == 100 && lastPct != 100)) { // 화면 그리기는 0.5초 걸려서 10%마다만
+    lastPct = pct;
+    char clock[8];
+    rtc::timeText(clock, sizeof(clock));
+    screen::showTransferSteps(steps, stepLabels, kStepCount, pct, clock, true);
+  }
+  return true;
+}
+
+// 변환 안 된 녹음을 오래된 것부터 글자로 바꾼다. 그만두면 false
+static bool convertPending() {
+  convertedNow = failedNow = 0;
+  int todo[kMaxNotes];
+  int todoCount = 0;
+  for (int i = noteCount - 1; i >= 0; i--) { // notes[]는 최신이 앞 → 뒤에서부터 = 오래된 것부터
+    if (!notes[i].converted && notes[i].seconds >= 1) todo[todoCount++] = notes[i].number;
+  }
+  steps[1] = screen::Step::Running;
+  if (todoCount == 0) {
+    stepLabels[1] = "변환할 것 없음";
+    steps[1] = screen::Step::Done;
+    return true;
+  }
+  stepLabels[1] = convertLabel;
+  for (int k = 0; k < todoCount; k++) {
+    snprintf(convertLabel, sizeof(convertLabel), "글자로 변환 %d/%d", k + 1, todoCount);
+    lastPct = -100;
+    onConvertProgress(0, 1); // 0% 막대로 먼저 그림
+    char wav[48], txt[48];
+    storage::wavPath(todo[k], wav, sizeof(wav));
+    snprintf(txt, sizeof(txt), "/notes/rec_%03d.txt", todo[k]);
+    const stt::Result r = stt::transcribe(wav, txt, onConvertProgress);
+    if (r == stt::Result::Cancelled) return false;
+    if (r == stt::Result::Ok) {
+      convertedNow++;
+      Serial.printf("[convert] #%03d ok\n", todo[k]);
+    } else {
+      failedNow++;
+      Serial.printf("[convert] #%03d failed: %s\n", todo[k], stt::lastError());
+    }
+  }
+  refreshNotes();
+  snprintf(convertLabel, sizeof(convertLabel), "글자로 변환 %d개", convertedNow);
+  steps[1] = screen::Step::Done;
+  return true;
 }
 
 static void updateConnecting() {
   if (net::isConnected()) {
     steps[0] = screen::Step::Done;
     stepLabels[0] = (tryList[tryIndex] == net::Wifi::Home) ? "와이파이: 집" : "와이파이: 휴대폰";
-    steps[1] = screen::Step::Done; // 변환은 다음 단계에서. 지금은 건너뜀
+    drawSteps(true);
+    if (!convertPending()) { // ▼ 눌러서 그만둠
+      Serial.println("[convert] cancelled");
+      refreshNotes();
+      leaveTransfer();
+      return;
+    }
     steps[2] = screen::Step::Running;
     drawSteps(true);
     net::startServer();
@@ -265,7 +333,7 @@ void setup() {
 
   Serial.begin(115200);
   delay(300);
-  Serial.println("[voicenote] boot step4-1 (wifi + transfer screens)");
+  Serial.println("[voicenote] boot step4-2 (whisper convert)");
 
   pinMode(PIN_BTN_TOP, INPUT_PULLUP);
   pinMode(PIN_BTN_PWR, INPUT_PULLUP);
