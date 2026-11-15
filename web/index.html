@@ -46,6 +46,16 @@ audio{width:100%;margin:4px 0 14px}
 .btn:disabled{opacity:.4}
 .delrow{margin-top:28px}
 main.selecting{padding-bottom:100px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin-bottom:14px}
+.card h3{margin:0 0 6px;font-size:14px;color:var(--sub);font-weight:700}
+.sum{white-space:pre-wrap;word-break:keep-all;overflow-wrap:anywhere;font-size:16px;line-height:1.7}
+.tabs{display:flex;gap:6px;margin-bottom:10px}
+.tab{border:1px solid var(--line);background:none;color:var(--sub);border-radius:99px;padding:6px 14px;font:inherit;font-size:14px;font-weight:700;cursor:pointer}
+.tab.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.utt{display:flex;gap:10px;margin:0 0 12px}
+.who{flex:none;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;color:#fff}
+.say{flex:1;word-break:keep-all;overflow-wrap:anywhere;line-height:1.7}
+.note2{color:var(--sub);font-size:13px;margin:-6px 0 14px}
 .demo{font-size:12px;color:var(--warn);text-align:center;margin-top:20px}
 </style>
 </head>
@@ -71,6 +81,8 @@ const demoNotes = [
   {n: 17, when: 1763100000, sec: 312, conv: false, prev: ""},
   {n: 16, when: 1763013600, sec: 65, conv: true, prev: "스택찬 영상 아이디어. 사람이 들어오면 인사하고 나가면 어디 가냐고 묻는 장면을 첫 장면으로."},
 ];
+const demoSummary = "회의에서 케이스 시안과 촬영 일정을 정함.\n- 다음 주 화요일까지 케이스 시안 2개\n- 수요일 촬영\n- 배터리 1000mAh로 바꿔 재시험\n할 일:\n- 케이스 시안 만들기\n- 촬영 일정 잡기";
+const demoSpeakers = "A: 다음 주 화요일까지 케이스 시안 두 개 만들 수 있어요?\nB: 네, 화요일까지 할게요. 촬영은 수요일 괜찮아요?\nA: 좋아요. 배터리는 1000mAh로 바꿔서 다시 해 봐요.";
 const demoText = "오늘 회의에서 정한 것 정리. 다음 주 화요일까지 케이스 시안 두 개 만들고, 수요일에 촬영 일정 잡기. 배터리는 1000mAh 로 바꿔서 다시 시험해 보기로 함.";
 
 const $ = (id) => document.getElementById(id);
@@ -148,6 +160,27 @@ async function showList() {
   renderList();
 }
 
+let info = {speakers: DEMO};
+async function getInfo() {
+  if (DEMO) return;
+  try { info = await (await fetch("/api/info")).json(); } catch (e) {}
+}
+async function getStored(kind, n) { // kind: summary | speakers
+  if (DEMO) return "";
+  const r = await fetch(`/api/${kind}?n=${n}`);
+  return r.ok ? r.text() : "";
+}
+const COLORS = ["#2f6fdf", "#d4572a", "#2e8b57", "#8a4fd1", "#b08800", "#c2307a"];
+function speakersHtml(t) {
+  return t.trim().split("\n").map((line) => {
+    const i = line.indexOf(": ");
+    const who = i > 0 ? line.slice(0, i) : "?";
+    const say = i > 0 ? line.slice(i + 2) : line;
+    const c = COLORS[(who.charCodeAt(0) - 65 + COLORS.length) % COLORS.length];
+    return `<div class="utt"><span class="who" style="background:${c}">${esc(who)}</span><span class="say">${esc(say)}</span></div>`;
+  }).join("");
+}
+
 async function showDetail(x) {
   history.pushState({n: x.n}, "", "#" + x.n);
   $("back").style.display = "block";
@@ -156,7 +189,13 @@ async function showDetail(x) {
   $("title").textContent = "";
   $("count").textContent = "";
   const text = x.conv ? await getText(x.n) : "";
-  $("main").innerHTML = `
+  let summary = text ? await getStored("summary", x.n) : "";
+  let spk = text && info.speakers ? await getStored("speakers", x.n) : "";
+  let view = "all"; // all | spk
+
+  const main = $("main");
+  function render() {
+    main.innerHTML = `
     <div class="detail">
       <h2>${pad3(x.n)}</h2>
       <div class="when">${when(x.when)} · ${len(x.sec) || "0초"}</div>
@@ -164,24 +203,72 @@ async function showDetail(x) {
       ${text ? `<div class="actions">
         <button class="btn primary" id="copy">글 복사</button>
         <a class="btn" ${DEMO ? "" : `href="/txt?n=${x.n}"`} download="voicenote_${String(x.n).padStart(3, "0")}.txt">TXT 저장</a>
-      </div>` : ""}
-      <div class="text ${text ? "" : "none"}">${text ? esc(text) : "아직 글로 바꾸지 않았어요.<br>기기에서 전송 모드를 켜면 바뀌어요."}</div>
+      </div>
+      <div class="actions">
+        <button class="btn" id="sumBtn">${summary ? "다시 요약" : "요약하기"}</button>
+        ${info.speakers && !spk ? '<button class="btn" id="spkBtn">화자 나누기</button>' : ""}
+      </div>
+      <p class="note2" id="busy" style="display:none"></p>` : ""}
+      ${summary ? `<div class="card"><h3>요약</h3><div class="sum">${esc(summary)}</div></div>` : ""}
+      ${spk ? `<div class="tabs"><button class="tab ${view === "all" ? "on" : ""}" data-v="all">전체 글</button><button class="tab ${view === "spk" ? "on" : ""}" data-v="spk">화자별</button></div>` : ""}
+      ${spk && view === "spk" ? `<div class="text">${speakersHtml(spk)}</div>`
+        : `<div class="text ${text ? "" : "none"}">${text ? esc(text) : "아직 글로 바꾸지 않았어요.<br>기기에서 전송 모드를 켜면 바뀌어요."}</div>`}
       <div class="actions delrow"><button class="btn danger" id="del">이 녹음 삭제</button></div>
     </div>`;
-  const c = $("copy");
-  if (c) c.onclick = async () => {
-    try { await navigator.clipboard.writeText(text); toast("복사했어요"); }
-    catch (e) { // http 주소에서는 복사 기능이 막힐 수 있어 예전 방식으로 한 번 더
-      const ta = document.createElement("textarea");
-      ta.value = text; document.body.appendChild(ta); ta.select();
-      document.execCommand("copy"); ta.remove(); toast("복사했어요");
-    }
-  };
-  $("del").onclick = async () => {
-    if (!confirm(`${pad3(x.n)} 녹음과 글을 지울까요?\n지우면 되돌릴 수 없어요.`)) return;
-    if (await deleteNotes([x.n])) { toast("지웠어요"); history.back(); }
-    else toast("지우지 못했어요");
-  };
+    bind();
+  }
+  function busy(msg) {
+    const b = $("busy");
+    b.style.display = msg ? "block" : "none";
+    b.textContent = msg || "";
+    main.querySelectorAll("#sumBtn,#spkBtn").forEach((e) => e.disabled = !!msg);
+  }
+  function bind() {
+    main.querySelectorAll(".tab").forEach((t) => t.onclick = () => { view = t.dataset.v; render(); });
+    const c = $("copy");
+    if (c) c.onclick = async () => {
+      const what = spk && view === "spk" ? spk.replace(/^(\S+): /gm, "화자 $1: ") : text;
+      try { await navigator.clipboard.writeText(what); toast("복사했어요"); }
+      catch (e) { // http 주소에서는 복사 기능이 막힐 수 있어 예전 방식으로 한 번 더
+        const ta = document.createElement("textarea");
+        ta.value = what; document.body.appendChild(ta); ta.select();
+        document.execCommand("copy"); ta.remove(); toast("복사했어요");
+      }
+    };
+    const sb = $("sumBtn");
+    if (sb) sb.onclick = async () => {
+      busy("요약하는 중… 10초쯤 걸려요");
+      if (DEMO) { await new Promise((r) => setTimeout(r, 800)); summary = demoSummary; return render(); }
+      try {
+        const r = await fetch("/api/summary?n=" + x.n, {method: "POST"});
+        const t = await r.text();
+        if (r.ok) { summary = t; render(); } else { busy(""); toast(t || "요약하지 못했어요"); }
+      } catch (e) { busy(""); toast("기기와 연결이 끊겼어요"); }
+    };
+    const kb = $("spkBtn");
+    if (kb) kb.onclick = async () => {
+      busy("녹음을 올리는 중…");
+      if (DEMO) { await new Promise((r) => setTimeout(r, 800)); spk = demoSpeakers; view = "spk"; return render(); }
+      // 시작하고, 끝날 때까지 5초마다 확인
+      for (let i = 0; i < 240; i++) {
+        let j;
+        try { j = await (await fetch("/api/speakers?n=" + x.n, {method: "POST"})).json(); }
+        catch (e) { busy(""); return toast("기기와 연결이 끊겼어요"); }
+        if (j.state === "done") { spk = await getStored("speakers", x.n); view = "spk"; return render(); }
+        if (j.state === "failed") { busy(""); return toast(j.error || "화자를 나누지 못했어요"); }
+        busy(`화자 나누는 중… 녹음 길이의 3분의 1쯤 걸려요 (${i * 5}초)`);
+        await new Promise((r) => setTimeout(r, 5000));
+      }
+      busy("");
+      toast("너무 오래 걸려요. 잠시 뒤 다시 눌러 주세요");
+    };
+    $("del").onclick = async () => {
+      if (!confirm(`${pad3(x.n)} 녹음과 글을 지울까요?\n지우면 되돌릴 수 없어요.`)) return;
+      if (await deleteNotes([x.n])) { toast("지웠어요"); history.back(); }
+      else toast("지우지 못했어요");
+    };
+  }
+  render();
   window.scrollTo(0, 0);
 }
 
@@ -203,7 +290,7 @@ $("delSel").onclick = async () => {
   showList();
 };
 window.onpopstate = () => { selecting = false; picked.clear(); showList(); };
-showList();
+getInfo().then(showList);
 </script>
 </body>
 </html>

@@ -1,10 +1,12 @@
 #include "net.h"
 
+#include <ArduinoJson.h>
 #include <ESPmDNS.h>
 #include <WebServer.h>
 #include <SD_MMC.h>
 #include <WiFi.h>
 
+#include "ai.h"
 #include "storage.h"
 #include "web_page.h"
 
@@ -194,12 +196,74 @@ static void handleDelete() {
     while (storage::textPath(n, path, sizeof(path))) { // .txt 와 .wav.txt 둘 다 있을 수 있음
       if (!SD_MMC.remove(path)) break;
     }
+    ai::summaryPath(n, path, sizeof(path));
+    SD_MMC.remove(path);
+    ai::speakersPath(n, path, sizeof(path));
+    SD_MMC.remove(path);
+    ai::jobPath(n, path, sizeof(path));
+    SD_MMC.remove(path);
     if (hadWav && wavOk) deleted++;
     if (!wavOk) failed++;
     Serial.printf("[web] delete #%03d %s\n", n, wavOk ? "ok" : "failed");
   }
   String json = String("{\"deleted\":") + deleted + ",\"failed\":" + failed + "}";
   server.send(failed ? 500 : 200, "application/json", json);
+}
+
+// SD의 글 파일을 그대로 보냄 (없으면 404)
+static void sendFileOr404(const char *path) {
+  File f = SD_MMC.open(path, FILE_READ);
+  if (!f) {
+    server.send(404, "text/plain; charset=utf-8", "");
+    return;
+  }
+  server.sendHeader("Cache-Control", "no-store");
+  server.streamFile(f, "text/plain; charset=utf-8");
+  f.close();
+}
+
+static void handleInfo() {
+  lastVisit = millis();
+  server.send(200, "application/json", ai::hasSpeakerKey() ? "{\"speakers\":true}" : "{\"speakers\":false}");
+}
+
+// GET: 저장된 요약 / POST: 새로 요약 (몇 초 걸림)
+static void handleSummary() {
+  lastVisit = millis();
+  const int n = argNumber();
+  char path[48];
+  ai::summaryPath(n, path, sizeof(path));
+  if (server.method() == HTTP_POST) {
+    String err;
+    if (!ai::summarize(n, err)) {
+      server.send(500, "text/plain; charset=utf-8", err);
+      lastVisit = millis();
+      return;
+    }
+    lastVisit = millis();
+  }
+  sendFileOr404(path);
+}
+
+// GET: 저장된 화자별 글 / POST: 시작하거나 진행 확인 → {"state":"working|done|failed","error":"..."}
+static void handleSpeakers() {
+  lastVisit = millis();
+  const int n = argNumber();
+  char path[48];
+  ai::speakersPath(n, path, sizeof(path));
+  if (server.method() != HTTP_POST) {
+    sendFileOr404(path);
+    return;
+  }
+  String err;
+  const ai::Speakers st = ai::speakers(n, err);
+  lastVisit = millis();
+  JsonDocument doc;
+  doc["state"] = st == ai::Speakers::Done ? "done" : st == ai::Speakers::Working ? "working" : "failed";
+  if (err.length()) doc["error"] = err;
+  String json;
+  serializeJson(doc, json);
+  server.send(200, "application/json", json);
 }
 
 bool startServer() {
@@ -214,6 +278,9 @@ bool startServer() {
     server.on("/txt", [] { sendText(true); });
     server.on("/audio", handleAudio);
     server.on("/api/delete", HTTP_POST, handleDelete);
+    server.on("/api/info", handleInfo);
+    server.on("/api/summary", handleSummary);
+    server.on("/api/speakers", handleSpeakers);
     static const char *headerKeys[] = {"Range"};
     server.collectHeaders(headerKeys, 1);
     server.onNotFound([] { server.send(404, "text/plain; charset=utf-8", "없는 페이지예요"); });
