@@ -30,12 +30,16 @@ static int parseNumber(const char *name) {
   return -1;
 }
 
+bool textPath(int number, char *out, size_t n) {
+  snprintf(out, n, "%s/rec_%03d.txt", kDir, number);
+  if (SD_MMC.exists(out)) return true;
+  snprintf(out, n, "%s/rec_%03d.wav.txt", kDir, number);
+  return SD_MMC.exists(out);
+}
+
 static bool hasText(int number) {
   char p[48];
-  snprintf(p, sizeof(p), "%s/rec_%03d.txt", kDir, number);
-  if (SD_MMC.exists(p)) return true;
-  snprintf(p, sizeof(p), "%s/rec_%03d.wav.txt", kDir, number);
-  return SD_MMC.exists(p);
+  return textPath(number, p, sizeof(p));
 }
 
 int list(Note *notes, int max) {

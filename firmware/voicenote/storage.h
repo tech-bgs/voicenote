@@ -20,6 +20,9 @@ int list(Note *notes, int max);
 int nextNumber();
 void wavPath(int number, char *out, size_t n);
 
+// 변환된 글 파일 경로를 out에 담는다 (없으면 false)
+bool textPath(int number, char *out, size_t n);
+
 // 변환된 글의 앞부분을 out에 담는다 (없으면 false)
 bool textPreview(int number, char *out, size_t n);
 

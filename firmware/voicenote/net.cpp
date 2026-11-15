@@ -2,7 +2,11 @@
 
 #include <ESPmDNS.h>
 #include <WebServer.h>
+#include <SD_MMC.h>
 #include <WiFi.h>
+
+#include "storage.h"
+#include "web_page.h"
 
 #if __has_include("secrets.h")
 #include "secrets.h"
@@ -35,17 +39,116 @@ void startConnect(Wifi w) {
 
 bool isConnected() { return WiFi.status() == WL_CONNECTED; }
 
-// 임시 첫 페이지. 녹음 목록·글 보기는 다음 단계에서 만든다.
+// ---------- 웹페이지 ----------
+static uint8_t buf[4096];
+static storage::Note list[200];
+
 static void handleRoot() {
   lastVisit = millis();
-  server.send(200, "text/html; charset=utf-8",
-              "<!doctype html><html><head><meta charset='utf-8'>"
-              "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-              "<title>VOICE NOTE</title></head>"
-              "<body style='font-family:sans-serif;padding:24px'>"
-              "<h2>VOICE NOTE</h2><p>연결됐어요.</p>"
-              "<p>녹음 목록은 다음 단계에서 이 페이지에 나와요.</p>"
-              "</body></html>");
+  server.send(200, "text/html; charset=utf-8", kIndexHtml);
+}
+
+// 녹음 목록: [{"n":13,"when":1763190600,"sec":31,"conv":true}, ...]
+static void handleNotes() {
+  lastVisit = millis();
+  const int count = storage::list(list, 200);
+  String json;
+  json.reserve(count * 56 + 4);
+  json += "[";
+  for (int i = 0; i < count; i++) {
+    if (i) json += ",";
+    json += "{\"n\":";
+    json += list[i].number;
+    json += ",\"when\":";
+    json += (uint32_t)list[i].when;
+    json += ",\"sec\":";
+    json += list[i].seconds;
+    json += ",\"conv\":";
+    json += list[i].converted ? "true" : "false";
+    json += "}";
+  }
+  json += "]";
+  server.sendHeader("Cache-Control", "no-store");
+  server.send(200, "application/json", json);
+}
+
+static int argNumber() { return server.hasArg("n") ? server.arg("n").toInt() : -1; }
+
+// 변환된 글. download=true 면 파일로 저장되게
+static void sendText(bool download) {
+  lastVisit = millis();
+  const int n = argNumber();
+  char path[48];
+  if (n < 0 || !storage::textPath(n, path, sizeof(path))) {
+    server.send(404, "text/plain; charset=utf-8", "글이 없어요");
+    return;
+  }
+  File f = SD_MMC.open(path, FILE_READ);
+  if (!f) {
+    server.send(500, "text/plain; charset=utf-8", "파일을 못 열었어요");
+    return;
+  }
+  if (download) {
+    char cd[64];
+    snprintf(cd, sizeof(cd), "attachment; filename=\"voicenote_%03d.txt\"", n);
+    server.sendHeader("Content-Disposition", cd);
+  }
+  server.sendHeader("Cache-Control", "no-store");
+  server.streamFile(f, "text/plain; charset=utf-8");
+  f.close();
+}
+
+// 녹음 듣기. 아이폰은 파일을 조각(Range)으로 달라고 해서 그것도 처리
+static void handleAudio() {
+  lastVisit = millis();
+  const int n = argNumber();
+  char path[48];
+  storage::wavPath(n, path, sizeof(path));
+  File f = n >= 0 ? SD_MMC.open(path, FILE_READ) : File();
+  if (!f) {
+    server.send(404, "text/plain; charset=utf-8", "녹음이 없어요");
+    return;
+  }
+  const uint32_t size = f.size();
+  uint32_t from = 0, to = size ? size - 1 : 0;
+  bool partial = false;
+  const String range = server.header("Range");
+  if (range.startsWith("bytes=") && size > 0) {
+    const int dash = range.indexOf('-');
+    const String a = range.substring(6, dash), b = range.substring(dash + 1);
+    if (a.length()) {
+      from = a.toInt();
+      if (b.length()) to = min((uint32_t)b.toInt(), size - 1);
+    } else if (b.length()) { // "bytes=-500" = 끝에서 500바이트
+      from = size - min((uint32_t)b.toInt(), size);
+    }
+    if (from > to) {
+      server.sendHeader("Content-Range", String("bytes */") + size);
+      server.send(416, "text/plain", "");
+      f.close();
+      return;
+    }
+    partial = true;
+  }
+  const uint32_t len = size ? to - from + 1 : 0;
+  server.sendHeader("Accept-Ranges", "bytes");
+  if (partial) {
+    char cr[64];
+    snprintf(cr, sizeof(cr), "bytes %lu-%lu/%lu", (unsigned long)from, (unsigned long)to, (unsigned long)size);
+    server.sendHeader("Content-Range", cr);
+  }
+  server.setContentLength(len);
+  server.send(partial ? 206 : 200, "audio/wav", "");
+  f.seek(from);
+  NetworkClient client = server.client();
+  uint32_t left = len;
+  while (left > 0 && client.connected()) {
+    const size_t r = f.read(buf, min(left, (uint32_t)sizeof(buf)));
+    if (r == 0) break;
+    if (client.write(buf, r) != r) break;
+    left -= r;
+  }
+  f.close();
 }
 
 bool startServer() {
@@ -55,6 +158,12 @@ bool startServer() {
   static bool routesAdded = false; // 두 번째 전송 모드에서 같은 주소를 또 등록하지 않게
   if (!routesAdded) {
     server.on("/", handleRoot);
+    server.on("/api/notes", handleNotes);
+    server.on("/api/text", [] { sendText(false); });
+    server.on("/txt", [] { sendText(true); });
+    server.on("/audio", handleAudio);
+    static const char *headerKeys[] = {"Range"};
+    server.collectHeaders(headerKeys, 1);
     server.onNotFound([] { server.send(404, "text/plain; charset=utf-8", "없는 페이지예요"); });
     routesAdded = true;
   }
