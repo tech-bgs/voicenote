@@ -280,7 +280,18 @@ void setup() {
   Serial.printf("[voicenote] ready (sd=%d rec=%d)\n", sdOk, recOk);
 }
 
+// 진단용: 버튼 핀이 실제로 바뀐 순간을 기록 (반응이 늦는 원인 찾기)
+static void logRawPins() {
+  static int lastTop = HIGH, lastBot = HIGH;
+  const int nt = digitalRead(PIN_BTN_TOP), nb = digitalRead(PIN_BTN_PWR);
+  if (nt != lastTop) Serial.printf("[pin] top %s\n", nt == LOW ? "down" : "up");
+  if (nb != lastBot) Serial.printf("[pin] bottom %s\n", nb == LOW ? "down" : "up");
+  lastTop = nt;
+  lastBot = nb;
+}
+
 void loop() {
+  logRawPins();
   const Press t = readButton(top, false); // 위 버튼은 길게 누르기 없음 → 누르는 순간 반응
   const bool bottomHasLong = (page == Page::Main || page == Page::List);
   const Press b = readButton(bottom, bottomHasLong);
