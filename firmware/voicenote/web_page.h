@@ -251,7 +251,7 @@ async function showDetail(x) {
     };
     const kb = $("spkBtn");
     if (kb) kb.onclick = async () => {
-      busy("1/2 녹음을 AssemblyAI에 올리는 중… (2분 녹음이면 30초쯤)");
+      busy("1/2 녹음을 AssemblyAI에 올리는 중… (2분 녹음이면 1분 30초쯤)");
       if (DEMO) { await new Promise((r) => setTimeout(r, 800)); spk = demoSpeakers; view = "spk"; return render(); }
       // 첫 요청: 녹음을 올리고 작업 시작. 그다음부터 5초마다 끝났는지 확인
       const t0 = Date.now();

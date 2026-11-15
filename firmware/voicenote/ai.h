@@ -18,6 +18,8 @@ bool summarize(int n, String &err);
 
 // 화자 나누기: 처음 부르면 녹음을 올리고 작업을 시작, 다음부터는 진행 상황 확인.
 enum class Speakers { Working, Done, Failed };
-Speakers speakers(int n, String &err);
+// progress: 녹음 올리는 동안 (보낸 바이트, 전체) 로 불림. false 를 돌려주면 그만둠 (nullptr 가능)
+typedef bool (*Progress)(uint32_t done, uint32_t total);
+Speakers speakers(int n, String &err, Progress progress = nullptr);
 
 } // namespace ai

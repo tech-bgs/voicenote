@@ -3,6 +3,7 @@
 
 #include <Wire.h>
 
+#include "ai.h"
 #include "input.h"
 #include "net.h"
 #include "pins.h"
@@ -182,9 +183,12 @@ static int tryIndex = 0;
 static uint32_t tryStartedAt = 0;
 static uint32_t readyAt = 0;
 
-static const int kStepCount = 3;
-static screen::Step steps[kStepCount];
-static const char *stepLabels[kStepCount];
+// 단계: 와이파이 → 글자로 변환 → (AssemblyAI 키가 있으면) 화자 나누기 → 폰에서 보기 준비
+static const int kMaxSteps = 4;
+static int kStepCount = 3;
+static screen::Step steps[kMaxSteps];
+static const char *stepLabels[kMaxSteps];
+static int stepReady = 2; // "폰에서 보기 준비" 칸 번호
 
 static void drawSteps(bool partial) {
   char clock[8];
@@ -211,11 +215,14 @@ static void enterTransfer() {
     return;
   }
   page = Page::Connecting;
+  const bool spk = ai::hasSpeakerKey();
+  kStepCount = spk ? 4 : 3;
+  stepReady = kStepCount - 1;
+  for (int i = 0; i < kStepCount; i++) steps[i] = screen::Step::Todo;
   steps[0] = screen::Step::Running;
-  steps[1] = screen::Step::Todo;
-  steps[2] = screen::Step::Todo;
   stepLabels[1] = "글자로 변환";
-  stepLabels[2] = "폰에서 보기 준비";
+  if (spk) stepLabels[2] = "화자 나누기";
+  stepLabels[stepReady] = "폰에서 보기 준비";
   tryIndex = 0;
   tryNextWifi();
   drawSteps(false);
@@ -260,6 +267,8 @@ static bool onConvertProgress(uint32_t done, uint32_t total) {
   return true;
 }
 
+static int convertedNums[kMaxNotes]; // 이번에 글자로 바꾼 녹음 번호 (화자 나누기 대상)
+
 // 변환 안 된 녹음을 오래된 것부터 글자로 바꾼다. 그만두면 false
 static bool convertPending() {
   convertedNow = failedNow = 0;
@@ -285,7 +294,7 @@ static bool convertPending() {
     const stt::Result r = stt::transcribe(wav, txt, onConvertProgress);
     if (r == stt::Result::Cancelled) return false;
     if (r == stt::Result::Ok) {
-      convertedNow++;
+      convertedNums[convertedNow++] = todo[k];
       Serial.printf("[convert] #%03d ok\n", todo[k]);
     } else {
       failedNow++;
@@ -298,18 +307,71 @@ static bool convertPending() {
   return true;
 }
 
+// 이번에 글자로 바꾼 녹음을 AssemblyAI로 화자 나누기 (폰에서 기다리지 않게 미리). 그만두면 false
+static char speakerLabel[32];
+
+static bool waitWithCancel(uint32_t ms) {
+  const uint32_t t0 = millis();
+  while (millis() - t0 < ms) {
+    if (readButton(bottom, false) == Press::Short) return false;
+    delay(20);
+  }
+  return true;
+}
+
+static bool splitSpeakers() {
+  if (kStepCount < 4) return true; // 키 없음
+  steps[2] = screen::Step::Running;
+  if (convertedNow == 0) {
+    stepLabels[2] = "화자 나눌 것 없음";
+    steps[2] = screen::Step::Done;
+    return true;
+  }
+  stepLabels[2] = speakerLabel;
+  int ok = 0;
+  for (int k = 0; k < convertedNow; k++) {
+    const int n = convertedNums[k];
+    snprintf(speakerLabel, sizeof(speakerLabel), "화자 나누기 %d/%d", k + 1, convertedNow);
+    lastPct = -100;
+    onConvertProgress(0, 1);
+    const uint32_t t0 = millis();
+    while (true) {
+      String err;
+      const ai::Speakers st = ai::speakers(n, err, onConvertProgress); // 처음엔 녹음 올리기, 다음부턴 확인
+      if (st == ai::Speakers::Done) {
+        ok++;
+        break;
+      }
+      if (st == ai::Speakers::Failed) {
+        if (err == "그만둠") return false;
+        Serial.printf("[speakers] #%03d failed: %s\n", n, err.c_str());
+        break;
+      }
+      onConvertProgress(1, 1); // 다 올림 → 막대 가득
+      if (millis() - t0 > 10UL * 60 * 1000) { // 10분 넘으면 이 녹음은 건너뜀 (폰에서 다시 누르면 이어서 확인)
+        Serial.printf("[speakers] #%03d still working, skip\n", n);
+        break;
+      }
+      if (!waitWithCancel(3000)) return false;
+    }
+  }
+  snprintf(speakerLabel, sizeof(speakerLabel), "화자 나누기 %d개", ok);
+  steps[2] = screen::Step::Done;
+  return true;
+}
+
 static void updateConnecting() {
   if (net::isConnected()) {
     steps[0] = screen::Step::Done;
     stepLabels[0] = (tryList[tryIndex] == net::Wifi::Home) ? "와이파이: 집" : "와이파이: 휴대폰";
     drawSteps(true);
-    if (!convertPending()) { // ▼ 눌러서 그만둠
+    if (!convertPending() || !splitSpeakers()) { // ▼ 눌러서 그만둠
       Serial.println("[convert] cancelled");
       refreshNotes();
       leaveTransfer();
       return;
     }
-    steps[2] = screen::Step::Running;
+    steps[stepReady] = screen::Step::Running;
     drawSteps(true);
     net::startServer();
     showReady();

@@ -221,7 +221,7 @@ static long readBodyToPsram(NetworkClientSecure &c, char **out, size_t cap) {
 static String assemblyAuth() { return String("authorization: ") + ASSEMBLYAI_API_KEY + "\r\n"; }
 
 // 녹음 파일을 AssemblyAI에 올리고 작업 번호를 받아 저장
-static bool startSpeakers(int n, String &err) {
+static bool startSpeakers(int n, String &err, Progress progress) {
   const uint32_t t0 = millis();
   char path[48];
   storage::wavPath(n, path, sizeof(path));
@@ -246,6 +246,12 @@ static bool startSpeakers(int n, String &err) {
       const size_t r = f.read(buf, min(left, (uint32_t)sizeof(buf)));
       if (r == 0 || !writeAll(c, buf, r)) break;
       left -= r;
+      if (progress && !progress(size - left, size)) {
+        f.close();
+        err = "그만둠";
+        Serial.printf("[ai] speakers #%03d: upload cancelled\n", n);
+        return false;
+      }
     }
     f.close();
     if (left > 0) {
@@ -371,7 +377,7 @@ static Speakers checkSpeakers(int n, const String &id, String &err) {
   return Speakers::Done;
 }
 
-Speakers speakers(int n, String &err) {
+Speakers speakers(int n, String &err, Progress progress) {
   if (!hasSpeakerKey()) {
     err = "AssemblyAI 키가 없어요";
     return Speakers::Failed;
@@ -382,7 +388,7 @@ Speakers speakers(int n, String &err) {
   jobPath(n, path, sizeof(path));
   String id;
   if (readFile(path, id) && id.length()) return checkSpeakers(n, id, err);
-  return startSpeakers(n, err) ? Speakers::Working : Speakers::Failed;
+  return startSpeakers(n, err, progress) ? Speakers::Working : Speakers::Failed;
 }
 
 } // namespace ai
