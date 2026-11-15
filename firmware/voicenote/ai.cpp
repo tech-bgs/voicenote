@@ -220,6 +220,63 @@ static long readBodyToPsram(NetworkClientSecure &c, char **out, size_t cap) {
 // ---------- 화자 나누기 ----------
 static String assemblyAuth() { return String("authorization: ") + ASSEMBLYAI_API_KEY + "\r\n"; }
 
+// ---------- 올릴 때 압축 (μ-law) ----------
+// AssemblyAI로 가는 길은 기기 쪽 보내기 칸(6KB)과 거리 때문에 느리다(약 40KB/s).
+// 16비트 소리를 8비트 μ-law(전화 음질)로 바꿔 크기를 반으로 줄여 보낸다. SD의 녹음은 그대로.
+static const bool kCompressForSpeakers = true;
+
+static uint8_t linearToUlaw(int16_t sample) {
+  const int kBias = 0x84, kClip = 32635;
+  int v = sample;
+  const int sign = v < 0 ? 0x80 : 0;
+  if (sign) v = -v;
+  if (v > kClip) v = kClip;
+  v += kBias;
+  int exponent = 7;
+  for (int mask = 0x4000; (v & mask) == 0 && exponent > 0; exponent--, mask >>= 1) {
+  }
+  const int mantissa = (v >> (exponent + 3)) & 0x0F;
+  return ~(sign | (exponent << 4) | mantissa);
+}
+
+// 이 기기의 녹음(44바이트 머리 + 16비트 PCM)인지 확인하고 소리 정보를 꺼냄
+static bool readPcmHeader(File &f, uint16_t &channels, uint32_t &rate, uint32_t &dataBytes) {
+  uint8_t h[44];
+  f.seek(0);
+  if (f.read(h, 44) != 44) return false;
+  if (memcmp(h, "RIFF", 4) || memcmp(h + 8, "WAVEfmt ", 8) || memcmp(h + 36, "data", 4)) return false;
+  const uint16_t format = h[20] | (h[21] << 8);
+  const uint16_t bits = h[34] | (h[35] << 8);
+  channels = h[22] | (h[23] << 8);
+  rate = h[24] | (h[25] << 8) | (h[26] << 16) | ((uint32_t)h[27] << 24);
+  dataBytes = f.size() - 44; // 녹음 중 꺼져 머리의 길이가 틀려도 실제 크기로
+  dataBytes -= dataBytes % (2 * channels);
+  return format == 1 && bits == 16 && channels >= 1 && rate > 0;
+}
+
+// μ-law WAV 머리 (fmt 18바이트 + fact 청크) = 58바이트
+static void makeUlawHeader(uint8_t *h, uint16_t channels, uint32_t rate, uint32_t samples) {
+  auto put32 = [&](int o, uint32_t v) { h[o] = v; h[o + 1] = v >> 8; h[o + 2] = v >> 16; h[o + 3] = v >> 24; };
+  auto put16 = [&](int o, uint16_t v) { h[o] = v; h[o + 1] = v >> 8; };
+  const uint32_t dataBytes = samples; // 1바이트 = 1샘플
+  memcpy(h, "RIFF", 4);
+  put32(4, 50 + dataBytes);
+  memcpy(h + 8, "WAVEfmt ", 8);
+  put32(16, 18);
+  put16(20, 7); // μ-law
+  put16(22, channels);
+  put32(24, rate);
+  put32(28, rate * channels);
+  put16(32, channels);
+  put16(34, 8);
+  put16(36, 0);
+  memcpy(h + 38, "fact", 4);
+  put32(42, 4);
+  put32(46, samples / channels);
+  memcpy(h + 50, "data", 4);
+  put32(54, dataBytes);
+}
+
 // 녹음 파일을 AssemblyAI에 올리고 작업 번호를 받아 저장
 static bool startSpeakers(int n, String &err, Progress progress) {
   const uint32_t t0 = millis();
@@ -230,7 +287,10 @@ static bool startSpeakers(int n, String &err, Progress progress) {
     err = "녹음이 없어요";
     return false;
   }
-  const uint32_t size = f.size();
+  uint16_t channels = 1;
+  uint32_t rate = 0, pcmBytes = 0;
+  const bool compress = kCompressForSpeakers && readPcmHeader(f, channels, rate, pcmBytes);
+  const uint32_t size = compress ? 58 + pcmBytes / 2 : f.size();
   String uploadUrl;
   {
     NetworkClientSecure c;
@@ -240,10 +300,27 @@ static bool startSpeakers(int n, String &err, Progress progress) {
       Serial.printf("[ai] speakers #%03d: upload connect failed\n", n);
       return false;
     }
-    // SD에서 조금씩 읽어 바로 보냄
+    // SD에서 조금씩 읽어 바로 보냄 (압축하면 16비트 2바이트 → 1바이트)
     uint32_t left = size;
+    if (compress) {
+      uint8_t h[58];
+      makeUlawHeader(h, channels, rate, pcmBytes / 2);
+      if (!writeAll(c, h, sizeof(h))) left = 1;
+      else left -= sizeof(h);
+      f.seek(44);
+    } else {
+      f.seek(0);
+    }
     while (left > 0) {
-      const size_t r = f.read(buf, min(left, (uint32_t)sizeof(buf)));
+      size_t r;
+      if (compress) {
+        const size_t want = min((uint32_t)(sizeof(buf) / 2) * 2, left * 2);
+        const size_t got = f.read(buf, want) & ~(size_t)1;
+        r = got / 2;
+        for (size_t i = 0; i < r; i++) buf[i] = linearToUlaw((int16_t)(buf[2 * i] | (buf[2 * i + 1] << 8)));
+      } else {
+        r = f.read(buf, min(left, (uint32_t)sizeof(buf)));
+      }
       if (r == 0 || !writeAll(c, buf, r)) break;
       left -= r;
       if (progress && !progress(size - left, size)) {
@@ -306,7 +383,8 @@ static bool startSpeakers(int n, String &err, Progress progress) {
     err = "작업 번호 저장 실패";
     return false;
   }
-  Serial.printf("[ai] speakers #%03d started (%lu ms)\n", n, (unsigned long)(millis() - t0));
+  Serial.printf("[ai] speakers #%03d started (%lu ms, %lu bytes, %s)\n", n, (unsigned long)(millis() - t0),
+                (unsigned long)size, compress ? "ulaw" : "wav");
   return true;
 }
 
