@@ -281,8 +281,9 @@ void setup() {
 }
 
 void loop() {
-  const Press t = readButton(top);
-  const Press b = readButton(bottom);
+  const Press t = readButton(top, false); // 위 버튼은 길게 누르기 없음 → 누르는 순간 반응
+  const bool bottomHasLong = (page == Page::Main || page == Page::List);
+  const Press b = readButton(bottom, bottomHasLong);
 
   if (t != Press::None) Serial.printf("[btn] top %s\n", t == Press::Long ? "long" : "short");
   if (b != Press::None) Serial.printf("[btn] bottom %s\n", b == Press::Long ? "long" : "short");
