@@ -16,12 +16,13 @@ header h1{font-size:19px;margin:0;letter-spacing:.04em;font-weight:800;flex:1}
 header .count{color:var(--sub);font-size:14px}
 .back{border:0;background:none;color:var(--ink);font-size:16px;padding:6px 8px 6px 0;cursor:pointer;display:none}
 main{max-width:640px;margin:0 auto;padding:12px 16px 40px}
-.note{display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin:10px 0;cursor:pointer;width:100%;text-align:left;color:inherit;font:inherit}
+.note{display:block;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin:10px 0;cursor:pointer;width:100%;text-align:left;color:inherit;font:inherit}
 .note:active{transform:scale(.99)}
-.num{font-weight:800;font-size:18px;min-width:52px;font-variant-numeric:tabular-nums}
-.meta{flex:1;min-width:0}
-.meta .date{font-size:15px}
-.meta .prev{color:var(--sub);font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.top{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--sub)}
+.num{font-weight:800;color:var(--ink);font-variant-numeric:tabular-nums}
+.top .date{flex:1}
+.prev{margin-top:6px;font-size:16px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:keep-all;overflow-wrap:anywhere}
+.prev.none{color:var(--sub);font-size:15px}
 .badge{font-size:12px;font-weight:700;padding:3px 8px;border-radius:99px;white-space:nowrap}
 .badge.ok{color:var(--ok);border:1px solid currentColor}
 .badge.wait{color:var(--warn);border:1px solid currentColor}
@@ -51,10 +52,10 @@ audio{width:100%;margin:4px 0 14px}
 // 기기(voicenote.local)에서 열면 기기 데이터를, 그냥 파일로 열면 예시 데이터를 보여 준다.
 const DEMO = location.protocol === "file:" || location.search.includes("demo");
 const demoNotes = [
-  {n: 19, when: 1763190600, sec: 10, conv: true},
-  {n: 18, when: 1763187000, sec: 31, conv: true},
-  {n: 17, when: 1763100000, sec: 312, conv: false},
-  {n: 16, when: 1763013600, sec: 65, conv: true},
+  {n: 19, when: 1763190600, sec: 10, conv: true, prev: "오늘 회의에서 정한 것 정리. 다음 주 화요일까지 케이스 시안 두 개 만들고, 수요일에 촬영 일정 잡기."},
+  {n: 18, when: 1763187000, sec: 31, conv: true, prev: "장 볼 것. 우유, 계란, 두부, 대파. 세탁소에 맡긴 코트 찾아오기."},
+  {n: 17, when: 1763100000, sec: 312, conv: false, prev: ""},
+  {n: 16, when: 1763013600, sec: 65, conv: true, prev: "스택찬 영상 아이디어. 사람이 들어오면 인사하고 나가면 어디 가냐고 묻는 장면을 첫 장면으로."},
 ];
 const demoText = "오늘 회의에서 정한 것 정리. 다음 주 화요일까지 케이스 시안 두 개 만들고, 수요일에 촬영 일정 잡기. 배터리는 1000mAh 로 바꿔서 다시 시험해 보기로 함.";
 
@@ -97,9 +98,8 @@ async function showList() {
   if (!notes.length) { main.innerHTML = '<p class="empty">녹음이 없어요</p>'; return; }
   main.innerHTML = notes.map((x) => `
     <button class="note" data-n="${x.n}">
-      <span class="num">${pad3(x.n)}</span>
-      <span class="meta"><div class="date">${when(x.when)}</div><div class="prev">${len(x.sec) || "0초"}</div></span>
-      <span class="badge ${x.conv ? "ok" : "wait"}">${x.conv ? "글 있음" : "변환 전"}</span>
+      <div class="top"><span class="num">${pad3(x.n)}</span><span class="date">${when(x.when)} · ${len(x.sec) || "0초"}</span>${x.conv ? "" : '<span class="badge wait">변환 전</span>'}</div>
+      <div class="prev ${x.prev ? "" : "none"}">${x.prev ? esc(x.prev) : x.conv ? "(글이 비어 있어요)" : "아직 글로 바꾸지 않았어요"}</div>
     </button>`).join("") + (DEMO ? '<p class="demo">예시 화면 (기기 데이터 아님)</p>' : "");
   main.querySelectorAll(".note").forEach((b) => b.onclick = () => showDetail(notes.find((x) => x.n == b.dataset.n)));
 }

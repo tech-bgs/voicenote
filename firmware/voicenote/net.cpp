@@ -48,12 +48,30 @@ static void handleRoot() {
   server.send(200, "text/html; charset=utf-8", kIndexHtml);
 }
 
-// 녹음 목록: [{"n":13,"when":1763190600,"sec":31,"conv":true}, ...]
+// JSON 문자열 안에 넣을 수 있게 " \ 와 제어 문자를 바꿈
+static void appendJsonString(String &out, const char *s) {
+  out += '"';
+  for (; *s; s++) {
+    const char c = *s;
+    if (c == '"' || c == '\\') {
+      out += '\\';
+      out += c;
+    } else if ((uint8_t)c < 0x20) {
+      out += ' ';
+    } else {
+      out += c;
+    }
+  }
+  out += '"';
+}
+
+// 녹음 목록: [{"n":13,"when":1763190600,"sec":31,"conv":true,"prev":"글 앞부분"}, ...]
 static void handleNotes() {
   lastVisit = millis();
   const int count = storage::list(list, 200);
   String json;
-  json.reserve(count * 56 + 4);
+  json.reserve(count * 200 + 4);
+  char prev[160]; // 한글 50자쯤
   json += "[";
   for (int i = 0; i < count; i++) {
     if (i) json += ",";
@@ -65,6 +83,9 @@ static void handleNotes() {
     json += list[i].seconds;
     json += ",\"conv\":";
     json += list[i].converted ? "true" : "false";
+    json += ",\"prev\":";
+    if (!list[i].converted || !storage::textPreview(list[i].number, prev, sizeof(prev))) prev[0] = 0;
+    appendJsonString(json, prev);
     json += "}";
   }
   json += "]";
