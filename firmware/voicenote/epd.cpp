@@ -136,9 +136,12 @@ void showFull(const uint8_t *image) {
 
 void showPartial(const uint8_t *image, bool allowCleanup) {
   if (!ready || (allowCleanup && partialCount >= kPartialLimit)) {
+    const uint32_t t0 = millis();
     showFull(image);
+    Serial.printf("[epd] full %lu ms\n", (unsigned long)(millis() - t0));
     return;
   }
+  const uint32_t t0 = millis();
   command(0x3C); // 부분 갱신 땐 테두리 그대로
   data(0x80);
   setCursor();
@@ -149,6 +152,7 @@ void showPartial(const uint8_t *image, bool allowCleanup) {
   data(0xFF);
   command(0x20);
   waitIdle();
+  Serial.printf("[epd] partial %lu ms\n", (unsigned long)(millis() - t0)); // 속도 재기용
 
   setCursor();
   command(0x26); // 다음 비교용으로 이전 그림 갱신
