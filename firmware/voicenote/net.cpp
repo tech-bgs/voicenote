@@ -172,6 +172,36 @@ static void handleAudio() {
   f.close();
 }
 
+// 녹음 지우기: POST n=13,14,15 → 녹음 파일과 글 파일을 함께 지움
+static void handleDelete() {
+  lastVisit = millis();
+  if (server.method() != HTTP_POST || !server.hasArg("n")) {
+    server.send(400, "text/plain; charset=utf-8", "잘못된 요청");
+    return;
+  }
+  const String arg = server.arg("n");
+  int deleted = 0, failed = 0, from = 0;
+  while (from < (int)arg.length()) {
+    int comma = arg.indexOf(',', from);
+    if (comma < 0) comma = arg.length();
+    const int n = arg.substring(from, comma).toInt();
+    from = comma + 1;
+    if (n <= 0) continue;
+    char path[48];
+    storage::wavPath(n, path, sizeof(path));
+    const bool hadWav = SD_MMC.exists(path);
+    const bool wavOk = !hadWav || SD_MMC.remove(path);
+    while (storage::textPath(n, path, sizeof(path))) { // .txt 와 .wav.txt 둘 다 있을 수 있음
+      if (!SD_MMC.remove(path)) break;
+    }
+    if (hadWav && wavOk) deleted++;
+    if (!wavOk) failed++;
+    Serial.printf("[web] delete #%03d %s\n", n, wavOk ? "ok" : "failed");
+  }
+  String json = String("{\"deleted\":") + deleted + ",\"failed\":" + failed + "}";
+  server.send(failed ? 500 : 200, "application/json", json);
+}
+
 bool startServer() {
   snprintf(ip, sizeof(ip), "%s", WiFi.localIP().toString().c_str());
   const bool mdnsOk = MDNS.begin("voicenote");
@@ -183,6 +213,7 @@ bool startServer() {
     server.on("/api/text", [] { sendText(false); });
     server.on("/txt", [] { sendText(true); });
     server.on("/audio", handleAudio);
+    server.on("/api/delete", HTTP_POST, handleDelete);
     static const char *headerKeys[] = {"Range"};
     server.collectHeaders(headerKeys, 1);
     server.onNotFound([] { server.send(404, "text/plain; charset=utf-8", "없는 페이지예요"); });

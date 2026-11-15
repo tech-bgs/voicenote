@@ -37,6 +37,17 @@ audio{width:100%;margin:4px 0 14px}
 .text.none{color:var(--sub)}
 .toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:var(--accent);color:var(--bg);padding:10px 18px;border-radius:99px;font-weight:700;opacity:0;transition:opacity .2s;pointer-events:none}
 .toast.show{opacity:1}
+.hbtn{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:99px;padding:5px 14px;font:inherit;font-size:14px;font-weight:700;cursor:pointer}
+.note.sel{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.tick{width:22px;height:22px;border-radius:50%;border:2px solid var(--sub);flex:none;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;color:var(--bg)}
+.note.sel .tick{background:var(--ink);border-color:var(--ink)}
+.bar{position:fixed;left:0;right:0;bottom:0;background:var(--bg);border-top:1px solid var(--line);padding:12px 16px;padding-bottom:max(12px,env(safe-area-inset-bottom));display:none;gap:8px;z-index:3}
+.bar.show{display:flex}
+.btn.danger{color:#c62f2f;border-color:#c62f2f55}
+.btn.danger.fill{background:#c62f2f;color:#fff;border-color:#c62f2f}
+.btn:disabled{opacity:.4}
+.delrow{margin-top:28px}
+main.selecting{padding-bottom:100px}
 .demo{font-size:12px;color:var(--warn);text-align:center;margin-top:20px}
 </style>
 </head>
@@ -45,8 +56,13 @@ audio{width:100%;margin:4px 0 14px}
   <button class="back" id="back" aria-label="목록으로">← 목록</button>
   <h1 id="title">VOICE NOTE</h1>
   <span class="count" id="count"></span>
+  <button class="hbtn" id="selbtn" style="display:none">선택</button>
 </header>
 <main id="main"></main>
+<div class="bar" id="bar">
+  <button class="btn" id="cancelSel">취소</button>
+  <button class="btn danger fill" id="delSel" disabled>삭제</button>
+</div>
 <div class="toast" id="toast"></div>
 <script>
 // 기기(voicenote.local)에서 열면 기기 데이터를, 그냥 파일로 열면 예시 데이터를 보여 준다.
@@ -86,27 +102,59 @@ async function getText(n) {
 }
 const esc = (s) => s.replace(/[&<>]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;"}[c]));
 
+let notes = [];
+let selecting = false;
+const picked = new Set();
+
+async function deleteNotes(nums) {
+  if (DEMO) { notes = notes.filter((x) => !nums.includes(x.n)); demoNotes.splice(0, demoNotes.length, ...notes); return true; }
+  const r = await fetch("/api/delete", {method: "POST", headers: {"Content-Type": "application/x-www-form-urlencoded"}, body: "n=" + nums.join(",")});
+  return r.ok;
+}
+
+function renderList() {
+  const main = $("main");
+  main.classList.toggle("selecting", selecting);
+  $("count").textContent = selecting ? `${picked.size}개 선택` : `녹음 ${notes.length}개`;
+  $("selbtn").style.display = notes.length ? "inline-block" : "none";
+  $("selbtn").textContent = selecting ? "모두" : "선택";
+  $("bar").classList.toggle("show", selecting);
+  $("delSel").disabled = picked.size === 0;
+  $("delSel").textContent = picked.size ? `${picked.size}개 삭제` : "삭제";
+  if (!notes.length) { main.innerHTML = '<p class="empty">녹음이 없어요</p>'; return; }
+  main.innerHTML = notes.map((x) => `
+    <button class="note ${picked.has(x.n) ? "sel" : ""}" data-n="${x.n}">
+      <div class="top">${selecting ? '<span class="tick">✓</span>' : ""}<span class="num">${pad3(x.n)}</span><span class="date">${when(x.when)} · ${len(x.sec) || "0초"}</span>${x.conv ? "" : '<span class="badge wait">변환 전</span>'}</div>
+      <div class="prev ${x.prev ? "" : "none"}">${x.prev ? esc(x.prev) : x.conv ? "(글이 비어 있어요)" : "아직 글로 바꾸지 않았어요"}</div>
+    </button>`).join("") + (DEMO ? '<p class="demo">예시 화면 (기기 데이터 아님)</p>' : "");
+  main.querySelectorAll(".note").forEach((b) => b.onclick = () => {
+    const n = +b.dataset.n;
+    if (selecting) { picked.has(n) ? picked.delete(n) : picked.add(n); renderList(); }
+    else showDetail(notes.find((x) => x.n === n));
+  });
+}
+
+function setSelecting(on) {
+  selecting = on;
+  picked.clear();
+  renderList();
+}
+
 async function showList() {
   history.replaceState(null, "", location.pathname + location.search);
   $("back").style.display = "none";
   $("title").textContent = "VOICE NOTE";
   const main = $("main");
   main.innerHTML = '<p class="empty">불러오는 중…</p>';
-  let notes;
   try { notes = await getNotes(); } catch (e) { main.innerHTML = '<p class="empty">기기와 연결이 끊겼어요.<br>기기에서 전송 모드를 다시 켜 주세요.</p>'; return; }
-  $("count").textContent = `녹음 ${notes.length}개`;
-  if (!notes.length) { main.innerHTML = '<p class="empty">녹음이 없어요</p>'; return; }
-  main.innerHTML = notes.map((x) => `
-    <button class="note" data-n="${x.n}">
-      <div class="top"><span class="num">${pad3(x.n)}</span><span class="date">${when(x.when)} · ${len(x.sec) || "0초"}</span>${x.conv ? "" : '<span class="badge wait">변환 전</span>'}</div>
-      <div class="prev ${x.prev ? "" : "none"}">${x.prev ? esc(x.prev) : x.conv ? "(글이 비어 있어요)" : "아직 글로 바꾸지 않았어요"}</div>
-    </button>`).join("") + (DEMO ? '<p class="demo">예시 화면 (기기 데이터 아님)</p>' : "");
-  main.querySelectorAll(".note").forEach((b) => b.onclick = () => showDetail(notes.find((x) => x.n == b.dataset.n)));
+  renderList();
 }
 
 async function showDetail(x) {
   history.pushState({n: x.n}, "", "#" + x.n);
   $("back").style.display = "block";
+  $("selbtn").style.display = "none";
+  $("bar").classList.remove("show");
   $("title").textContent = "";
   $("count").textContent = "";
   const text = x.conv ? await getText(x.n) : "";
@@ -120,6 +168,7 @@ async function showDetail(x) {
         <a class="btn" ${DEMO ? "" : `href="/txt?n=${x.n}"`} download="voicenote_${String(x.n).padStart(3, "0")}.txt">TXT 저장</a>
       </div>` : ""}
       <div class="text ${text ? "" : "none"}">${text ? esc(text) : "아직 글로 바꾸지 않았어요.<br>기기에서 전송 모드를 켜면 바뀌어요."}</div>
+      <div class="actions delrow"><button class="btn danger" id="del">이 녹음 삭제</button></div>
     </div>`;
   const c = $("copy");
   if (c) c.onclick = async () => {
@@ -130,11 +179,32 @@ async function showDetail(x) {
       document.execCommand("copy"); ta.remove(); toast("복사했어요");
     }
   };
+  $("del").onclick = async () => {
+    if (!confirm(`${pad3(x.n)} 녹음과 글을 지울까요?\n지우면 되돌릴 수 없어요.`)) return;
+    if (await deleteNotes([x.n])) { toast("지웠어요"); history.back(); }
+    else toast("지우지 못했어요");
+  };
   window.scrollTo(0, 0);
 }
 
 $("back").onclick = () => history.back();
-window.onpopstate = () => showList();
+$("selbtn").onclick = () => {
+  if (!selecting) return setSelecting(true);
+  // 선택 중엔 "모두" 버튼: 전부 고르기 / 전부 풀기
+  if (picked.size === notes.length) picked.clear(); else notes.forEach((x) => picked.add(x.n));
+  renderList();
+};
+$("cancelSel").onclick = () => setSelecting(false);
+$("delSel").onclick = async () => {
+  const nums = [...picked];
+  if (!nums.length) return;
+  if (!confirm(`녹음 ${nums.length}개와 글을 지울까요?\n지우면 되돌릴 수 없어요.`)) return;
+  if (await deleteNotes(nums)) toast(`${nums.length}개 지웠어요`); else toast("일부를 지우지 못했어요");
+  selecting = false;
+  picked.clear();
+  showList();
+};
+window.onpopstate = () => { selecting = false; picked.clear(); showList(); };
 showList();
 </script>
 </body>

@@ -223,6 +223,8 @@ static void enterTransfer() {
 
 static void leaveTransfer() {
   net::stop();
+  refreshNotes(); // 폰에서 지운 녹음이 있을 수 있음
+  selected = 0;
   goMain();
 }
 
