@@ -7,6 +7,7 @@
 #include "input.h"
 #include "net.h"
 #include "pins.h"
+#include "power.h"
 #include "recorder.h"
 #include "rtc.h"
 #include "screen.h"
@@ -53,7 +54,28 @@ static int pendingCount() {
 static Button top{PIN_BTN_TOP};
 static Button bottom{PIN_BTN_PWR};
 
-static int batteryPct() { return 80; } // 배터리 읽기는 다음 단계
+// 배터리: 30초마다 읽어 둠 (읽을 때마다 값이 조금씩 흔들려서)
+static int batteryCached = -1;
+static uint32_t batteryReadAt = 0;
+
+static int batteryPct() {
+  if (batteryCached < 0 || millis() - batteryReadAt > 30000) {
+    batteryCached = power::batteryPercent();
+    batteryReadAt = millis();
+    screen::setBattery(batteryCached);
+    Serial.printf("[power] battery %lu mV, %d%%\n", (unsigned long)power::batteryMilliVolts(), batteryCached);
+  }
+  return batteryCached;
+}
+
+// ---------- 저절로 꺼지기 ----------
+static const uint32_t kIdleOffMs = 5UL * 60 * 1000; // 5분 동안 아무 버튼도 안 누르면
+static uint32_t lastActivity = 0;
+
+static void autoOff() {
+  screen::showOff(noteCount, batteryPct());
+  power::off(); // 돌아오지 않음 (배터리면 꺼지고, USB면 깊은 잠 → 버튼 누르면 처음부터 시작)
+}
 
 // ---------- 화면 이동 ----------
 static const char *mainTopHint() { return (sdOk && recOk) ? "▲ 녹음" : nullptr; }
@@ -248,7 +270,7 @@ static void showReady() {
   } else {
     snprintf(line1, sizeof(line1), "새로 변환 %d개", convertedNow);
   }
-  screen::showTransferReady("voicenote.local", net::ipText(), line1, "5분 뒤 와이파이를 꺼요", clock);
+  screen::showTransferReady("voicenote.local", net::ipText(), line1, "5분 뒤 저절로 꺼져요", clock);
 }
 
 // 변환 중 진행 막대 + ▼로 그만두기
@@ -402,13 +424,16 @@ void setup() {
   pinMode(PIN_BTN_TOP, INPUT_PULLUP);
   pinMode(PIN_BTN_PWR, INPUT_PULLUP);
 
+  power::begin();
   Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
   screen::begin();            // 화면 전원 켬
   sdOk = storage::begin();
   recOk = recorder::begin();  // 오디오 전원 켬
   rtc::begin();               // 시계 칩은 위 전원들이 켜진 뒤에 읽어야 응답함 (공식 예제 순서)
   refreshNotes();
+  batteryPct(); // 첫 화면에 실제 배터리 표시
   goMain();
+  lastActivity = millis();
   Serial.printf("[voicenote] ready (sd=%d rec=%d)\n", sdOk, recOk);
 }
 
@@ -427,6 +452,13 @@ void loop() {
   const Press t = readButton(top, false); // 위 버튼은 길게 누르기 없음 → 누르는 순간 반응
   const bool bottomHasLong = (page == Page::Main || page == Page::List);
   const Press b = readButton(bottom, bottomHasLong);
+
+  if (t != Press::None || b != Press::None || top.down || bottom.down) lastActivity = millis();
+  const bool idlePage = page == Page::Main || page == Page::List || page == Page::Detail || page == Page::Message ||
+                        page == Page::NoWifi;
+  if (!idlePage) lastActivity = millis(); // 녹음·재생·전송 중엔 세지 않음 (끝난 뒤부터 5분)
+  if (idlePage && millis() - lastActivity > kIdleOffMs) autoOff();
+  if (idlePage) batteryPct(); // 30초마다 새로 읽음
 
   if (t != Press::None) Serial.printf("[btn] top %s\n", t == Press::Long ? "long" : "short");
   if (b != Press::None) Serial.printf("[btn] bottom %s\n", b == Press::Long ? "long" : "short");
@@ -453,7 +485,12 @@ void loop() {
     case Page::Ready: {
       net::handle();
       const uint32_t since = max(readyAt, net::lastVisitMs());
-      if (b == Press::Short || millis() - since > kReadyIdleMs) leaveTransfer();
+      if (b == Press::Short) {
+        leaveTransfer();
+      } else if (millis() - since > kReadyIdleMs) { // 폰도 버튼도 5분 동안 조용
+        net::stop();
+        autoOff();
+      }
       break;
     }
 

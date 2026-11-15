@@ -118,7 +118,12 @@ static void battery(int x, int y, int pct) {
 }
 
 // 맨 위 줄: 왼쪽 제목, 오른쪽 배터리 (그 왼쪽에 rightText)
+static int batteryNow = -1; // setBattery 로 받은 값 (-1 = 아직 모름)
+
+void setBattery(int pct) { batteryNow = pct; }
+
 static void statusBar(int batteryPct, const char *title, const char *rightText = nullptr) {
+  if (batteryNow >= 0) batteryPct = batteryNow;
   drawK(6, 18, title, KO18);
   if (rightText) textRight(164, 18, rightText, KO18);
   battery(172, 6, batteryPct);
@@ -439,6 +444,17 @@ void showTransferReady(const char *host, const char *ip, const char *line1, cons
   if (line1) textCenter(140, line1, KO18);
   if (line2) textCenter(162, line2, KO18);
   hintBar(nullptr, "끝내기 ▼");
+  flush(false);
+}
+
+void showOff(int noteCount, int batteryPct) {
+  g.clearBuffer();
+  textCenter(70, "VOICE NOTE", KO26);
+  char line[32];
+  snprintf(line, sizeof(line), "녹음 %d개 · 배터리 %d%%", noteCount, batteryPct);
+  textCenter(104, line, KO18);
+  textCenter(150, "꺼져 있어요", KO20);
+  textCenter(176, "버튼을 누르면 켜져요", KO18);
   flush(false);
 }
 

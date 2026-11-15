@@ -13,6 +13,9 @@ namespace screen {
 
 void begin();
 
+// 위 막대에 보일 배터리 잔량 (0~100). 바뀔 때마다 알려 줌
+void setBattery(int pct);
+
 // topHint: 위 버튼 안내 (예: "▲ 녹음"). 아직 안 되는 기능이면 nullptr로 숨김
 // clock: "14:32" (시계가 없으면 빈 문자열)
 void showMain(int noteCount, int pendingCount, int batteryPct, const char *topHint, const char *clock);
@@ -41,6 +44,9 @@ void showTransferSteps(const Step *states, const char *const *labels, int count,
 
 // 폰에서 열 주소 안내. line1·line2: 아래 안내 두 줄 (없으면 nullptr)
 void showTransferReady(const char *host, const char *ip, const char *line1, const char *line2, const char *clock);
+
+// 저절로 꺼질 때 마지막으로 남기는 화면 (전원이 꺼져도 그대로 보임)
+void showOff(int noteCount, int batteryPct);
 
 // 와이파이를 못 찾았을 때
 void showNoWifi(const char *clock);
