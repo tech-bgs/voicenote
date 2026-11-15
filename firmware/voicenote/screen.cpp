@@ -191,7 +191,7 @@ void showList(const NoteRow *rows, int total, int selected, int batteryPct, bool
   g.clearBuffer();
   char pos[16];
   snprintf(pos, sizeof(pos), "%d/%d", selected + 1, total);
-  statusBar(batteryPct, "녹음 목록", pos);
+  statusBar(batteryPct, "▼ 길게: 메인", pos); // 메인으로 가는 법 안내 (아래 칸은 자리가 없음)
 
   // 한 화면에 3줄. 선택된 줄이 들어 있는 3줄 묶음을 보여 준다
   const int first = (selected / 3) * 3;
