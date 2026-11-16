@@ -21,7 +21,7 @@
 ## 필요한 것
 
 - 보드: **Waveshare ESP32-S3-ePaper-1.54 (V2)** — ESP32-S3-PICO-1 N8R8, 1.54인치 전자종이, ES8311 오디오, SD카드 슬롯. 핀 배치는 [`PINS.md`](PINS.md).
-  - 구매 링크: [AliExpress](https://s.click.aliexpress.com/e/_c3clbqn9) (제휴 링크예요. 이 링크로 사시면 저에게 소정의 수수료가 들어와요.)
+  - 구매 링크: [AliExpress](https://s.click.aliexpress.com/e/_c3tW1KbP) (제휴 링크예요. 이 링크로 사시면 저에게 소정의 수수료가 들어와요.)
 - microSD 카드 (FAT32)
 - OpenAI API 키 (글자 변환·요약)
 - AssemblyAI API 키 (화자 나누기, 없어도 됨)
